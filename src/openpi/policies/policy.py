@@ -62,6 +62,9 @@ class Policy(BasePolicy):
         else:
             # JAX model setup
             self._sample_actions = nnx_utils.module_jit(model.sample_actions)
+            # Check if model has get_prefix_rep method before jitting
+            if hasattr(model, "get_prefix_rep"):
+                self._get_prefix_rep = nnx_utils.module_jit(model.get_prefix_rep)
             self._rng = rng or jax.random.key(0)
 
     @override
@@ -104,6 +107,27 @@ class Policy(BasePolicy):
             "infer_ms": model_time * 1000,
         }
         return outputs
+
+    @override
+    def get_prefix_rep(self, obs: dict) -> Any:
+        if self._is_pytorch_model:
+             raise NotImplementedError("get_prefix_rep not implemented for PyTorch models yet")
+        
+        # Make a copy since transformations may modify the inputs in place.
+        inputs = jax.tree.map(lambda x: x, obs)
+        inputs = self._input_transform(inputs)
+        
+        # Make a batch and convert to jax.Array.
+        inputs = jax.tree.map(lambda x: jnp.asarray(x)[np.newaxis, ...], inputs)
+        
+        observation = _model.Observation.from_dict(inputs)
+        if hasattr(self, "_get_prefix_rep"):
+            outputs = self._get_prefix_rep(observation)
+            # Convert to numpy but keep batch dimension (B, S, E)
+            outputs = jax.tree.map(lambda x: np.asarray(x), outputs)
+            return outputs
+        else:
+            raise AttributeError("Model does not support get_prefix_rep")
 
     @property
     def metadata(self) -> dict[str, Any]:
