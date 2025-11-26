@@ -3,7 +3,7 @@ name = "openpi"
 version = "0.1.0"
 description = "Physical Intelligence open source repo"
 readme = "README.md"
-requires-python = ">=3.10,<3.11"
+requires-python = ">=3.11"
 license = { file = "LICENSE" }
 dependencies = [
     "augmax>=0.3.4",
@@ -15,22 +15,22 @@ dependencies = [
     "fsspec[gcs]>=2024.6.0",
     "gym-aloha>=0.1.1",
     "imageio>=2.36.1",
-    "jax[cuda12]==0.5.3",
+    "jax[cuda12]==0.5.0",
     "jaxtyping==0.2.36",
     "lerobot",
     "ml_collections==1.0.0",
-    "numpy>=1.22.4,<2.0.0",
+    "numpy>=1.26.4,<2.0.0",
     "numpydantic>=1.6.6",
     "opencv-python>=4.10.0.84",
     "openpi-client",
-    "orbax-checkpoint==0.11.13",
+    "orbax-checkpoint==0.11.1",
     "pillow>=11.0.0",
     "sentencepiece>=0.2.0",
-    "torch==2.7.1",
+    "torch>=2.5.1",
     "tqdm-loggable>=0.2",
     "typing-extensions>=4.12.2",
     "tyro>=0.9.5",
-    "wandb>=0.19.1",
+    "wandb[media]>=0.19.1",
     "filelock>=3.16.1",
     "beartype==0.19.0",
     "treescope>=0.1.7",
@@ -38,6 +38,20 @@ dependencies = [
     "rich>=14.0.0",
     "polars>=1.30.0",
     "piper-sdk",
+    # DSRL training dependencies
+    "distrax==0.1.5",
+    "optax==0.2.4",
+    "gym==0.26.2",
+    "gymnasium>=1.0.0",
+    "h5py>=3.13.0",
+    "moviepy==1.0.3",
+    "scipy>=1.15.0",
+    "pandas>=2.2.0",
+    "matplotlib>=3.9.0",
+    "easydict>=1.13",
+    "dm-control>=1.0.14",
+    "tensorflow>=2.15.0",
+    "tf_keras>=2.15.0",
 ]
 
 
@@ -61,7 +75,7 @@ rlds = [
 ]
 
 [tool.uv]
-override-dependencies = ["ml-dtypes==0.4.1", "tensorstore==0.1.74"]
+override-dependencies = ["ml-dtypes==0.5.1", "tensorstore==0.1.74"]
 
 [tool.uv.sources]
 openpi-client = { workspace = true }
@@ -73,7 +87,7 @@ members = ["packages/*"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
 extend-exclude = ["docker", "third_party", "src/openpi/models_pytorch/transformers_replace/*"]
 
 [tool.ruff.lint]
