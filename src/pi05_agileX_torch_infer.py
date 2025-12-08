@@ -1,0 +1,75 @@
+from openpi.training import config as _config
+from openpi.policies import policy_config
+import numpy as np
+import time
+import torch
+
+torch._dynamo.config.suppress_errors = True
+
+model_name = "pi05_agileX"
+
+print(f'Config [{model_name}]....')
+config = _config.get_config(model_name)
+# Update config to match the converted checkpoint if necessary
+# The user converted with action_dim=14, so we should ensure the config reflects that if it doesn't already.
+# However, get_config returns the default config. 
+# The policy loading mechanism might override some things from the checkpoint config.json, 
+# but let's point to the checkpoint directory first.
+
+checkpoint_dir = "/home/twinkle/Project/openpi/checkpoints/1128_pi05_test_torch/10000"
+print(f'Load {model_name} done.')
+
+def _random_observation_agilex() -> dict:
+    # AgileX expects 4 cameras and a state vector.
+    # Based on LeRobotAgileXDataConfig repack_transforms:
+    # "images": {"camera0": "camera0", ...}
+    # "state": "observation.state"
+    
+    return {
+        "camera0": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+        "camera1": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+        "camera2": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+        "camera3": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+        # Assuming 14-dim state as per user's conversion action_dim=14
+        "observation.state": np.random.rand(14).astype(np.float32), 
+        "prompt": "Pick up the PCB board from the green conveyor belt and place it into the yellow container.",
+    }
+
+print('Generating example observation...')
+example = _random_observation_agilex()
+
+print('Creating trained policy....')
+# We need to make sure the config used here matches the one used for conversion/training.
+# The user used --action_dim 14 during conversion.
+# We might need to patch the config object if the default pi05_agileX has action_dim=7.
+if config.model.action_dim != 14:
+    print(f"Updating config action_dim from {config.model.action_dim} to 14 to match checkpoint.")
+    # We need to create a new config with updated action_dim
+    import dataclasses
+    from openpi.models import pi0_config
+    
+    new_model_config = dataclasses.replace(config.model, action_dim=14)
+    config = dataclasses.replace(config, model=new_model_config)
+
+policy = policy_config.create_trained_policy(config, checkpoint_dir)
+
+print('Warmup inference...')
+action_chunk = policy.infer(example)["actions"]      # 预热模型避免造成统计偏差
+
+print('-' * 50)
+
+inference_count = 10
+total_inference_time = 0.0
+print('Inference...')
+for i in range(inference_count):
+    print('-' * 50)
+    print(f"Ready to {i+1}/{inference_count} inference...")
+    start_time = time.time()
+    action_chunk = policy.infer(example)["actions"]
+    end_time = time.time()
+    print(f'Inference done, cost time {end_time - start_time:.3f} s')
+    print(f"Action chunk shape: {action_chunk.shape}")
+    # print(action_chunk) # Optional: print actions
+    total_inference_time += (end_time - start_time)
+    
+print(f'Total inference done, average cost time: {(total_inference_time / inference_count)} s')
