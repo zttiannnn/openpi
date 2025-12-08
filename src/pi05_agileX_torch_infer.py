@@ -20,18 +20,18 @@ checkpoint_dir = "/home/twinkle/Project/openpi/checkpoints/1128_pi05_test_torch/
 print(f'Load {model_name} done.')
 
 def _random_observation_agilex() -> dict:
-    # AgileX expects 4 cameras and a state vector.
-    # Based on LeRobotAgileXDataConfig repack_transforms:
-    # "images": {"camera0": "camera0", ...}
-    # "state": "observation.state"
+    # AgileX expects a dictionary with "images" and "state" keys, matching AgileXInputs expectations.
+    # "images" should be a dict of camera names to arrays.
     
     return {
-        "camera0": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
-        "camera1": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
-        "camera2": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
-        "camera3": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+        "images": {
+            "camera0": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+            "camera1": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+            "camera2": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+            "camera3": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+        },
         # Assuming 14-dim state as per user's conversion action_dim=14
-        "observation.state": np.random.rand(14).astype(np.float32), 
+        "state": np.random.rand(14).astype(np.float32), 
         "prompt": "Pick up the PCB board from the green conveyor belt and place it into the yellow container.",
     }
 
