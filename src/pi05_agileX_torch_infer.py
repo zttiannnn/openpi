@@ -57,7 +57,7 @@ policy = policy_config.create_trained_policy(config, checkpoint_dir)
 # The error is that norm_stats has shape (7,) but input state is (14,)
 # We need to find the Normalize transform and update its stats.
 from openpi import transforms
-import jax.numpy as jnp
+from openpi.policies import agileX_policy
 
 def patch_norm_stats(policy):
     for transform in policy._input_transform.transforms:
@@ -99,7 +99,18 @@ def patch_norm_stats(policy):
                     print("  No 'state' or 'observation.state' key found in norm_stats.")
                     print(f"  Available keys: {list(transform.norm_stats.keys())}")
 
+def patch_use_images(policy):
+    """Patch AgileXInputs to enable image processing if needed."""
+    for transform in policy._input_transform.transforms:
+        if isinstance(transform, agileX_policy.AgileXInputs):
+            if not transform.use_images:
+                print(f"Found AgileXInputs with use_images={transform.use_images}, patching to True...")
+                # AgileXInputs is a frozen dataclass, so we need to use object.__setattr__
+                object.__setattr__(transform, 'use_images', True)
+                print(f"  Patched AgileXInputs.use_images to {transform.use_images}")
+
 patch_norm_stats(policy)
+patch_use_images(policy)
 
 print('Warmup inference...')
 action_chunk = policy.infer(example)["actions"]      # 预热模型避免造成统计偏差
