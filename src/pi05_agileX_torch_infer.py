@@ -32,7 +32,7 @@ def _random_observation_agilex() -> dict:
         },
         # Assuming 14-dim state as per user's conversion action_dim=14
         "state": np.random.rand(14).astype(np.float32), 
-        "prompt": "Pick up the PCB board from the green conveyor belt and place it into the yellow container.",
+        "prompt": "Do something.",
     }
 
 print('Generating example observation...')
@@ -60,30 +60,32 @@ from openpi import transforms
 import jax.numpy as jnp
 
 def patch_norm_stats(policy):
-    for transform in policy._input_transforms:
+    for transform in policy._input_transform.transforms:
         if isinstance(transform, transforms.Normalize):
             print("Found Normalize transform, checking stats...")
             if transform.norm_stats is not None:
-                # Check 'observation.state' stats
-                if "observation.state" in transform.norm_stats:
-                    stats = transform.norm_stats["observation.state"]
-                    if stats.q01 is not None and stats.q01.shape[-1] == 7:
-                        print("Patching observation.state norm stats from 7 to 14 dims...")
-                        # Pad with identity-like stats or repeat?
-                        # Since we don't know the stats for the extra dims, let's just repeat the last dim 
-                        # or pad with values that result in no-op or safe normalization.
-                        # For quantile norm: (x - q01) / (q99 - q01) * 2 - 1
-                        # If we want x to map to x (approx), we need q01 and q99 such that the range matches expected input range.
-                        # But simpler is to just repeat the stats if the extra dims are similar, 
-                        # or just pad with zeros/ones if we don't care.
-                        # Let's try repeating the last dimension 7 times to make it 14.
+                # The key in norm_stats is "state", not "observation.state"
+                state_key = None
+                if "state" in transform.norm_stats:
+                    state_key = "state"
+                elif "observation.state" in transform.norm_stats:
+                    state_key = "observation.state"
+                
+                if state_key is not None:
+                    stats = transform.norm_stats[state_key]
+                    current_dim = stats.q01.shape[-1] if stats.q01 is not None else (stats.mean.shape[-1] if stats.mean is not None else 0)
+                    print(f"  {state_key} norm stats current dim: {current_dim}")
+                    
+                    if current_dim == 7:
+                        print(f"  Patching {state_key} norm stats from 7 to 14 dims...")
                         
                         def pad_stat(arr):
-                            if arr is None: return None
-                            # arr is (7,)
-                            # pad with the last value
-                            padding = np.tile(arr[-1:], (7,))
-                            return np.concatenate([arr, padding], axis=-1)
+                            if arr is None: 
+                                return None
+                            arr = np.asarray(arr)
+                            # arr is (7,), pad by repeating to make (14,)
+                            padding = np.tile(arr, (2,))[:14]  # Double and take first 14
+                            return padding
 
                         new_stats = transforms.NormStats(
                             mean=pad_stat(stats.mean),
@@ -91,8 +93,11 @@ def patch_norm_stats(policy):
                             q01=pad_stat(stats.q01),
                             q99=pad_stat(stats.q99),
                         )
-                        transform.norm_stats["observation.state"] = new_stats
-                        print("Patched observation.state stats.")
+                        transform.norm_stats[state_key] = new_stats
+                        print(f"  Patched {state_key} stats to dim {new_stats.mean.shape[-1] if new_stats.mean is not None else 'N/A'}.")
+                else:
+                    print("  No 'state' or 'observation.state' key found in norm_stats.")
+                    print(f"  Available keys: {list(transform.norm_stats.keys())}")
 
 patch_norm_stats(policy)
 
