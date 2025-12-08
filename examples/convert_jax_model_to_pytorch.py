@@ -560,6 +560,8 @@ def main(
     config_name: str,
     output_path: str | None = None,
     precision: Literal["float32", "bfloat16", "float16"] = "bfloat16",
+    action_dim: int | None = None,
+    action_horizon: int | None = None,
     *,
     inspect_only: bool = False,
 ):
@@ -569,11 +571,38 @@ def main(
         checkpoint_dir: Path to the JAX checkpoint directory
         output_path: Path to save converted PyTorch model (required for conversion)
         precision: Precision for model conversion
+        action_dim: Override action dimension from config (use this to match checkpoint)
+        action_horizon: Override action horizon from config (use this to match checkpoint)
         inspect_only: Only inspect parameter keys, don't convert
     """
     model_config = _config.get_config(config_name).model
     if not isinstance(model_config, openpi.models.pi0_config.Pi0Config):
         raise ValueError(f"Config {config_name} is not a Pi0Config")
+    
+    # Override action_dim and action_horizon if provided
+    if action_dim is not None:
+        model_config = openpi.models.pi0_config.Pi0Config(
+            action_dim=action_dim,
+            action_horizon=action_horizon if action_horizon is not None else model_config.action_horizon,
+            max_token_len=model_config.max_token_len,
+            dtype=model_config.dtype,
+            paligemma_variant=model_config.paligemma_variant,
+            action_expert_variant=model_config.action_expert_variant,
+            pi05=model_config.pi05,
+            discrete_state_input=model_config.discrete_state_input,
+        )
+    elif action_horizon is not None:
+        model_config = openpi.models.pi0_config.Pi0Config(
+            action_dim=model_config.action_dim,
+            action_horizon=action_horizon,
+            max_token_len=model_config.max_token_len,
+            dtype=model_config.dtype,
+            paligemma_variant=model_config.paligemma_variant,
+            action_expert_variant=model_config.action_expert_variant,
+            pi05=model_config.pi05,
+            discrete_state_input=model_config.discrete_state_input,
+        )
+    
     if inspect_only:
         load_jax_model_and_print_keys(checkpoint_dir)
     else:
