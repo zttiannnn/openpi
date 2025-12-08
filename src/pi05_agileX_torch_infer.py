@@ -53,6 +53,49 @@ if config.model.action_dim != 14:
 
 policy = policy_config.create_trained_policy(config, checkpoint_dir)
 
+# Patch the normalization stats in the policy if needed
+# The error is that norm_stats has shape (7,) but input state is (14,)
+# We need to find the Normalize transform and update its stats.
+from openpi import transforms
+import jax.numpy as jnp
+
+def patch_norm_stats(policy):
+    for transform in policy._input_transforms:
+        if isinstance(transform, transforms.Normalize):
+            print("Found Normalize transform, checking stats...")
+            if transform.norm_stats is not None:
+                # Check 'observation.state' stats
+                if "observation.state" in transform.norm_stats:
+                    stats = transform.norm_stats["observation.state"]
+                    if stats.q01 is not None and stats.q01.shape[-1] == 7:
+                        print("Patching observation.state norm stats from 7 to 14 dims...")
+                        # Pad with identity-like stats or repeat?
+                        # Since we don't know the stats for the extra dims, let's just repeat the last dim 
+                        # or pad with values that result in no-op or safe normalization.
+                        # For quantile norm: (x - q01) / (q99 - q01) * 2 - 1
+                        # If we want x to map to x (approx), we need q01 and q99 such that the range matches expected input range.
+                        # But simpler is to just repeat the stats if the extra dims are similar, 
+                        # or just pad with zeros/ones if we don't care.
+                        # Let's try repeating the last dimension 7 times to make it 14.
+                        
+                        def pad_stat(arr):
+                            if arr is None: return None
+                            # arr is (7,)
+                            # pad with the last value
+                            padding = np.tile(arr[-1:], (7,))
+                            return np.concatenate([arr, padding], axis=-1)
+
+                        new_stats = transforms.NormStats(
+                            mean=pad_stat(stats.mean),
+                            std=pad_stat(stats.std),
+                            q01=pad_stat(stats.q01),
+                            q99=pad_stat(stats.q99),
+                        )
+                        transform.norm_stats["observation.state"] = new_stats
+                        print("Patched observation.state stats.")
+
+patch_norm_stats(policy)
+
 print('Warmup inference...')
 action_chunk = policy.infer(example)["actions"]      # 预热模型避免造成统计偏差
 
