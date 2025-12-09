@@ -356,6 +356,11 @@ def _decode_aloha(
     # --- state 始终解码 ---
     state = np.asarray(data["state"][:7])
     state = _decode_state(state, adapt_to_pi=adapt_to_pi)
+    # state = np.asarray(data["state"])  # ✅ 保持完整维度
+    # if state.shape[0] >= 7:
+    #     state = _decode_state(state, adapt_to_pi=adapt_to_pi)
+    # else:
+    #     raise ValueError(f"State dimension {state.shape[0]} < 7")
     data["state"] = state
 
     # --- 图像可选 ---
@@ -400,14 +405,35 @@ def _decode_state(state: np.ndarray, *, adapt_to_pi: bool = False) -> np.ndarray
 
 def _encode_actions(actions: np.ndarray, *, adapt_to_pi: bool = False) -> np.ndarray:
     if adapt_to_pi:
-        # Flip the joints.
-        actions = _joint_flip_mask() * actions
-        actions[:, [6]] = _gripper_from_angular(actions[:, [6]])
+        # actions = _joint_flip_mask() * actions
+        # actions[:, [6]] = _gripper_from_angular(actions[:, [6]])
+        # Flip the joints (only first 7 dims)
+        actions_main = actions[:, :7]
+        actions_rest = actions[:, 7:] if actions.shape[1] > 7 else None
+        
+        actions_main = _joint_flip_mask() * actions_main
+        actions_main[:, [6]] = _gripper_from_angular(actions_main[:, [6]])
+        
+        if actions_rest is not None and actions_rest.shape[1] > 0:
+            actions = np.concatenate([actions_main, actions_rest], axis=1)
+        else:
+            actions = actions_main
     return actions
 
 
 def _encode_actions_inv(actions: np.ndarray, *, adapt_to_pi: bool = False) -> np.ndarray:
     if adapt_to_pi:
-        actions = _joint_flip_mask() * actions
-        actions[:, [6]] = _gripper_from_angular_inv(actions[:, [6]])
+        # actions = _joint_flip_mask() * actions
+        # actions[:, [6]] = _gripper_from_angular(actions[:, [6]])
+        # Flip the joints (only first 7 dims)
+        actions_main = actions[:, :7]
+        actions_rest = actions[:, 7:] if actions.shape[1] > 7 else None
+        
+        actions_main = _joint_flip_mask() * actions_main
+        actions_main[:, [6]] = _gripper_from_angular_inv(actions_main[:, [6]])
+        
+        if actions_rest is not None and actions_rest.shape[1] > 0:
+            actions = np.concatenate([actions_main, actions_rest], axis=1)
+        else:
+            actions = actions_main
     return actions

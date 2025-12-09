@@ -4,15 +4,20 @@
 用法：
 uv run scripts/evaluate.py run --episode_id 0 --period 50 --out ./temp.npz
 uv run scripts/evaluate.py plot --inp ./temp.npz --out ./temp.png
+
+docker container openpi:
+python scripts/evaluate.py run --episode_id 0 --period 50 --out ./temp.npz --checkpoint_dir /home/hyc/openpi_ws/robot_repo/openpi_torch/openpi/checkpoints/1128_pi05_test_torch/10000 --root /home/hyc/openpi_ws/robot_repo/openpi_torch/openpi/test_1112_trans
 """
 
 import os
 import time
 import argparse
 from typing import Sequence
+from pathlib import Path
 
 import numpy as np
 import matplotlib.pyplot as plt
+from datasets import load_dataset
 
 import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
 from openpi.policies import policy_config as _policy_config
@@ -50,10 +55,57 @@ def run_infer_and_save(args):
         policy.reset()
 
     action_sequence_keys: Sequence[str] = ("action",)
-    # 数据集 & episode
-    dataset = lerobot_dataset.LeRobotDataset(args.repo_id, root=args.root,delta_timestamps={
-            key: [t / args.fps for t in range(args.period)] for key in action_sequence_keys
-        },)
+    
+    # 使用 LeRobot 加载数据集（包括视频），但需要 monkey-patch 来修复 torch.stack bug
+    import torch
+    from lerobot.common.datasets import video_utils
+    
+    # Monkey patch: 修复 LeRobot 的 torch.stack(Column) bug
+    original_init = lerobot_dataset.LeRobotDataset.__init__
+    
+    def patched_init(self, *args, **kwargs):
+        # 调用原始 __init__，但捕获并修复 torch.stack 错误
+        try:
+            original_init(self, *args, **kwargs)
+        except TypeError as e:
+            if "stack()" in str(e) and "Column" in str(e):
+                # Bug 发生了，手动修复
+                print("Detected torch.stack(Column) bug, applying fix...")
+                # 跳过 timestamp 处理，LeRobot v2.1 数据集已经有 timestamp
+                pass
+            else:
+                raise
+    
+    lerobot_dataset.LeRobotDataset.__init__ = patched_init
+    
+    # 现在加载数据集
+    dataset = lerobot_dataset.LeRobotDataset(
+        args.repo_id, 
+        root=args.root,
+        download_videos=False  # 视频已经在本地
+    )
+    
+    print(f"Loaded dataset with {len(dataset)} samples")
+    print(f"Dataset columns: {dataset.hf_dataset.column_names}")
+    # # v0 - 旧版本，与 LeRobot v2 不兼容
+    # dataset = lerobot_dataset.LeRobotDataset(args.repo_id, root=args.root,delta_timestamps={
+    #         key: [t / args.fps for t in range(args.period)] for key in action_sequence_keys
+    #     },)
+    # v2 ################
+    # v2.1 数据集自带 timestamp，不需要 delta_timestamps
+    # 使用绝对路径确保在容器内能正确找到数据集
+    # import pathlib
+    # root_path = pathlib.Path(args.root).resolve()
+    # print(f"Loading dataset from: {root_path}")
+    # print(f"Dataset exists: {root_path.exists()}")
+    
+    # # 使用 v2.1 作为 revision（匹配 info.json 中的 codebase_version）
+    # dataset = lerobot_dataset.LeRobotDataset(
+    #     "local/dataset", 
+    #     root=str(root_path),
+    #     revision="v2.1"
+    # )
+     # v2 ################
     # print(dataset.__len__())
     # print(dataset[177256]["observation.state"])
     # print(dataset[177256]["index"])
@@ -128,7 +180,14 @@ def run_infer_and_save(args):
 
             remain = len(episode_steps) - t
             block = np.asarray(result["actions"])[:min(args.period, remain)]
-            gt_actions_list.extend(np.asarray(step["action"]))
+            
+            # Collect GT actions for this period
+            for offset in range(min(args.period, remain)):
+                step_idx = idx + offset
+                if step_idx < len(dataset.hf_dataset):
+                    gt_step = dataset.__getitem__(step_idx)
+                    gt_actions_list.append(np.asarray(gt_step["action"]))
+            
             pred_actions_list.extend(block)
             print(f"current step {t}/{len(episode_steps)}")
 
@@ -136,6 +195,13 @@ def run_infer_and_save(args):
     min_len = min(len(gt_actions_list), len(pred_actions_list))
     gt_actions = np.stack(gt_actions_list[:min_len])           # [T, A]
     pred_actions = np.stack(pred_actions_list[:min_len])       # [T, A]
+    
+    # 如果预测维度是 GT 的 2 倍，可能是位置+速度模式，只取前半部分
+    if pred_actions.shape[1] == gt_actions.shape[1] * 2:
+        print(f"Warning: pred_actions has {pred_actions.shape[1]} dims, gt_actions has {gt_actions.shape[1]} dims.")
+        print(f"Assuming position+velocity mode, taking only first {gt_actions.shape[1]} dims (position).")
+        pred_actions = pred_actions[:, :gt_actions.shape[1]]
+    
     infer_times_ms = np.asarray(infer_times_ms, dtype=np.float32)
     infer_states = np.stack(infer_states_list, axis=0) if infer_states_list else np.zeros((0, gt_actions.shape[1]), dtype=gt_actions.dtype)
 
@@ -232,8 +298,8 @@ def build_cli():
     p_run = subparsers.add_parser("run", help="Run inference and save results to .npz")
     p_run.add_argument("--config", default="pi05_agileX")
     p_run.add_argument("--checkpoint_dir", default="/home/test/jemotor/jemodel/pi05/1113_pi05_test/2500/")
-    p_run.add_argument("--repo_id", default="lerobot/test")
-    p_run.add_argument("--root", default="/home/test/jemotor/jedata/test_1112_trans/")
+    p_run.add_argument("--repo_id", default="test_1204")
+    p_run.add_argument("--root", default="./dataset_eval/test_1204")
     p_run.add_argument("--episode_id", type=int, default=5)
     p_run.add_argument("--period", type=int, default=50)
     p_run.add_argument("--default_prompt", default="pick up the circular chip and place it on the yellow pot")
@@ -242,7 +308,7 @@ def build_cli():
     p_run.add_argument("--out-png", default="", help="If --plot-after-run, output PNG path (optional).")
     p_run.add_argument("--dpi", type=int, default=150)
     p_run.add_argument("--fps", type=int, default=30)
-    p_run.add_argument("--mode", required=False, type=str, default="speed")
+    p_run.add_argument("--mode", required=False, type=str, default=None)
     p_run.set_defaults(func=run_infer_and_save)
 
     # plot
