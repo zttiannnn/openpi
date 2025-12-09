@@ -458,7 +458,7 @@ class LeRobotAgileXDataConfigNewForm(DataConfigFactory):
 
     load_images: bool = True
 
-    use_depth: bool = True
+    use_depth: bool = False # True
 
 
     # Repack transforms.
