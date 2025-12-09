@@ -8,10 +8,12 @@ from openpi.shared import image_tools
 logger = logging.getLogger("openpi")
 
 # Constants moved from model.py
+# Updated to match AgileX image keys
 IMAGE_KEYS = (
-    "base_0_rgb",
-    "left_wrist_0_rgb",
-    "right_wrist_0_rgb",
+    "base_rgb",
+    "right_wrist_rgb",
+    "feng_rgb",
+    "bao_rgb",
 )
 
 IMAGE_RESOLUTION = (224, 224)

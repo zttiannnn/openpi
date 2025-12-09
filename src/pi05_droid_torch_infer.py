@@ -11,7 +11,7 @@ model_name = "pi05_droid"
 
 print(f'Config [{model_name}]....')
 config = _config.get_config(model_name)
-checkpoint_dir = "./torch_pi05_droid"
+checkpoint_dir = "/workspace/robot_repo/openpi/checkpoints/torch_pi05_droid"
 print(f'Load {model_name} done.')
 
 def _random_observation_droid() -> dict:

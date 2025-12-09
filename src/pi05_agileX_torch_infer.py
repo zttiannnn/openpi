@@ -16,19 +16,31 @@ config = _config.get_config(model_name)
 # The policy loading mechanism might override some things from the checkpoint config.json, 
 # but let's point to the checkpoint directory first.
 
-checkpoint_dir = "/home/twinkle/Project/openpi/checkpoints/1128_pi05_test_torch/10000"
+checkpoint_dir = "/workspace/robot_repo/openpi_torch/openpi/checkpoints/1128_pi05_test_torch/10000"
 print(f'Load {model_name} done.')
 
 def _random_observation_agilex() -> dict:
     # AgileX expects a dictionary with "images" and "state" keys, matching AgileXInputs expectations.
-    # "images" should be a dict of camera names to arrays.
+    # AgileXInputs expects camera0-camera3 and depth images, which it then converts to base_rgb, feng_rgb, bao_rgb etc.
+    # See agileX_policy.py EXPECTED_CAMERAS: ("camera0", "camera1", "camera2", "camera3", "camera0_depth"...)
     
     return {
+        # "images": {
+        #     "camera0": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+        #     "camera1": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+        #     "camera2": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+        #     "camera3": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+        # },
         "images": {
             "camera0": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
             "camera1": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
             "camera2": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
             "camera3": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+            # Add depth images (optional, but expected by EXPECTED_CAMERAS)
+            "camera0_depth": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+            "camera1_depth": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+            "camera2_depth": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+            "camera3_depth": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
         },
         # Assuming 14-dim state as per user's conversion action_dim=14
         "state": np.random.rand(14).astype(np.float32), 
