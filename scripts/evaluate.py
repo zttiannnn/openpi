@@ -161,17 +161,18 @@ def run_infer_and_save(args):
                     "camera2": step["camera2"],
                     "camera3": step["camera3"],
                 },
-                "image_masks": {
-                    "camera0": np.array([True], dtype=bool),
-                    "camera1": np.array([True], dtype=bool),
-                    "camera2": np.array([True], dtype=bool),
-                    "camera3": np.array([True], dtype=bool),
-                },
+                # "image_masks": {
+                #     "camera0": np.array([True], dtype=bool),
+                #     "camera1": np.array([True], dtype=bool),
+                #     "camera2": np.array([True], dtype=bool),
+                #     "camera3": np.array([True], dtype=bool),
+                # },
                 "state": cur_state,
-                "tokenized_prompt": tokenized,
-                "tokenized_prompt_mask": mask,
-                "token_ar_mask": None,
-                "token_loss_mask": None,
+                # "tokenized_prompt": tokenized,
+                # "tokenized_prompt_mask": mask,
+                # "token_ar_mask": None,
+                # "token_loss_mask": None,
+                "prompt": step.get("task") or args.default_prompt,
             }
 
             tic = time.time()
@@ -181,6 +182,7 @@ def run_infer_and_save(args):
             remain = len(episode_steps) - t
             block = np.asarray(result["actions"])[:min(args.period, remain)]
             
+            # gt_actions_list.extend(np.asarray(step["action"]))
             # Collect GT actions for this period
             for offset in range(min(args.period, remain)):
                 step_idx = idx + offset
@@ -196,11 +198,11 @@ def run_infer_and_save(args):
     gt_actions = np.stack(gt_actions_list[:min_len])           # [T, A]
     pred_actions = np.stack(pred_actions_list[:min_len])       # [T, A]
     
-    # 如果预测维度是 GT 的 2 倍，可能是位置+速度模式，只取前半部分
-    if pred_actions.shape[1] == gt_actions.shape[1] * 2:
-        print(f"Warning: pred_actions has {pred_actions.shape[1]} dims, gt_actions has {gt_actions.shape[1]} dims.")
-        print(f"Assuming position+velocity mode, taking only first {gt_actions.shape[1]} dims (position).")
-        pred_actions = pred_actions[:, :gt_actions.shape[1]]
+    # # 如果预测维度是 GT 的 2 倍，可能是位置+速度模式，只取前半部分
+    # if pred_actions.shape[1] == gt_actions.shape[1] * 2:
+    #     print(f"Warning: pred_actions has {pred_actions.shape[1]} dims, gt_actions has {gt_actions.shape[1]} dims.")
+    #     print(f"Assuming position+velocity mode, taking only first {gt_actions.shape[1]} dims (position).")
+    #     pred_actions = pred_actions[:, :gt_actions.shape[1]]
     
     infer_times_ms = np.asarray(infer_times_ms, dtype=np.float32)
     infer_states = np.stack(infer_states_list, axis=0) if infer_states_list else np.zeros((0, gt_actions.shape[1]), dtype=gt_actions.dtype)
@@ -308,7 +310,7 @@ def build_cli():
     p_run.add_argument("--out-png", default="", help="If --plot-after-run, output PNG path (optional).")
     p_run.add_argument("--dpi", type=int, default=150)
     p_run.add_argument("--fps", type=int, default=30)
-    p_run.add_argument("--mode", required=False, type=str, default=None)
+    p_run.add_argument("--mode", required=False, type=str, default=None)  # 改为 None，不使用 speed 模式
     p_run.set_defaults(func=run_infer_and_save)
 
     # plot

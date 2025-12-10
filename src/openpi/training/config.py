@@ -329,7 +329,7 @@ class LeRobotAgileXDataConfig(DataConfigFactory):
     # use speed mode
     use_speed: bool = False
 
-    load_images: bool = False
+    load_images: bool = True  # 改为 True，启用图像加载
 
     # Repack transforms.
     repack_transforms: tyro.conf.Suppress[_transforms.Group] = dataclasses.field(
