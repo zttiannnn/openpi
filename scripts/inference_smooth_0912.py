@@ -78,6 +78,18 @@ def inference_worker(
     # 1. 只在该进程里加载一次模型 / CUDA
     policy = _policy_config.create_trained_policy(config, checkpoint_dir)
 
+    logging.info(
+        "traj limits: use_toppra=%s vmax=%.1f amax=%.1f use_ruckig=%s vmax=%.1f amax=%.1f jmax=%.1f (fps=%s)",
+        getattr(args, "use_toppra", False),
+        float(getattr(args, "toppra_max_velocity", 0.0)),
+        float(getattr(args, "toppra_max_acceleration", 0.0)),
+        getattr(args, "use_ruckig", False),
+        float(getattr(args, "ruckig_max_velocity", 0.0)),
+        float(getattr(args, "ruckig_max_acceleration", 0.0)),
+        float(getattr(args, "ruckig_max_jerk", 0.0)),
+        getattr(args, "fps", None),
+    )
+
     # Print import/runtime context once (helps detect wrong module/env)
     try:
         import scripts.trajectory_smoother as _ts
@@ -401,12 +413,14 @@ def main():
     
     # ============ TOPP-RA + Ruckig 轨迹平滑参数 ============
     parser.add_argument("--use_toppra", action="store_true", help="启用 TOPP-RA 时间最优路径规划")
-    parser.add_argument("--toppra_max_velocity", type=float, default=1.0, help="TOPP-RA 关节最大速度")
-    parser.add_argument("--toppra_max_acceleration", type=float, default=2.0, help="TOPP-RA 关节最大加速度")
+    # 注意：AgileX follower 这套动作通常是 pulse 量级（数值可到 1e4~1e5），
+    # 若仍用 1.0/2.0 这种默认值，会导致 TOPP-RA 规划出的 duration 极度夸张（几十万秒），并造成卡顿。
+    parser.add_argument("--toppra_max_velocity", type=float, default=200000.0, help="TOPP-RA 关节最大速度 (pulse/s)")
+    parser.add_argument("--toppra_max_acceleration", type=float, default=500000.0, help="TOPP-RA 关节最大加速度 (pulse/s^2)")
     parser.add_argument("--use_ruckig", action="store_true", help="启用 Ruckig jerk-limited 轨迹平滑（可选增强）")
-    parser.add_argument("--ruckig_max_velocity", type=float, default=1.0, help="Ruckig 关节最大速度")
-    parser.add_argument("--ruckig_max_acceleration", type=float, default=2.0, help="Ruckig 关节最大加速度")
-    parser.add_argument("--ruckig_max_jerk", type=float, default=5.0, help="Ruckig 关节最大 jerk")
+    parser.add_argument("--ruckig_max_velocity", type=float, default=200000.0, help="Ruckig 关节最大速度 (pulse/s)")
+    parser.add_argument("--ruckig_max_acceleration", type=float, default=500000.0, help="Ruckig 关节最大加速度 (pulse/s^2)")
+    parser.add_argument("--ruckig_max_jerk", type=float, default=2000000.0, help="Ruckig 关节最大 jerk (pulse/s^3)")
 
     # Profiling / diagnostics (prints timing that explains stutter)
     parser.add_argument("--profile", action="store_true", help="打印关键耗时打点（观测/推理/后处理/控制循环）")
@@ -426,6 +440,18 @@ def main():
         format='[Main] %(asctime)s - %(levelname)s - %(message)s',
         handlers=[logging.StreamHandler(sys.stdout)],
         force=True,
+    )
+
+    logging.info(
+        "traj limits: use_toppra=%s vmax=%.1f amax=%.1f use_ruckig=%s vmax=%.1f amax=%.1f jmax=%.1f (fps=%s)",
+        args.use_toppra,
+        float(args.toppra_max_velocity),
+        float(args.toppra_max_acceleration),
+        args.use_ruckig,
+        float(args.ruckig_max_velocity),
+        float(args.ruckig_max_acceleration),
+        float(args.ruckig_max_jerk),
+        args.fps,
     )
 
     # Print import context once (helps detect running a different file/module than expected)
