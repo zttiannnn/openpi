@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
+# import lerobot.common.datasets.lerobot_dataset as lerobot_dataset  # 已移除：未使用且版本兼容性问题
 import time
 import argparse
 import draccus

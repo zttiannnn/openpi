@@ -7,7 +7,8 @@ from typing import Literal, Protocol, SupportsIndex, TypeVar
 
 import jax
 import jax.numpy as jnp
-import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
+# lerobot 延迟导入：仅在 create_torch_dataset 中使用，避免推理时的导入错误
+# import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
 import numpy as np
 import torch
 
@@ -159,6 +160,24 @@ def create_torch_dataset(
     data_config: _config.DataConfig, action_horizon: int, model_config: _model.BaseModelConfig
 ) -> Dataset:
     """Create a dataset for training."""
+    # 延迟导入 lerobot，避免推理时的导入错误
+    try:
+        import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
+    except ImportError:
+        # 尝试新版 lerobot API
+        try:
+            from lerobot.common.datasets import LeRobotDataset, LeRobotDatasetMetadata
+            class _LeroboDatasetCompat:
+                LeRobotDataset = LeRobotDataset
+                LeRobotDatasetMetadata = LeRobotDatasetMetadata
+            lerobot_dataset = _LeroboDatasetCompat()
+        except ImportError as e:
+            raise ImportError(
+                "lerobot is required for training. Please install a compatible version:\n"
+                "  pip install 'lerobot<0.4.0' 'numpy>=1.22.4,<2.0.0'\n"
+                f"Original error: {e}"
+            ) from e
+    
     repo_id = data_config.repo_id
     if repo_id is None:
         raise ValueError("Repo ID is not set. Cannot create dataset.")

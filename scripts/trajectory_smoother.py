@@ -73,7 +73,9 @@ def toppra_time_optimal(
     max_velocity: np.ndarray | float = 1.0,
     max_acceleration: np.ndarray | float = 2.0,
     control_cycle: float = 0.033,
-) -> Tuple[np.ndarray, float]:
+    start_velocity: np.ndarray | None = None,
+    maintain_end_velocity: bool = True,  # 是否保持终点速度（不减速到零）
+) -> Tuple[np.ndarray, float, np.ndarray]:
     """
     使用 TOPP-RA 进行时间最优路径参数化。
     
@@ -85,14 +87,18 @@ def toppra_time_optimal(
         max_velocity: 每个自由度的最大速度，标量或 (D,) 数组
         max_acceleration: 每个自由度的最大加速度，标量或 (D,) 数组
         control_cycle: 控制周期（秒），用于采样
+        start_velocity: (D,) 起始速度，None 表示零速度
+        maintain_end_velocity: 如果为 True，终点保持匀速（不减速到零）
     
     Returns:
         trajectory: (N, D) 时间最优轨迹（按控制周期采样）
         duration: 轨迹总时长（秒）
+        final_velocity: (D,) 轨迹终点速度
     """
     if not TOPPRA_AVAILABLE:
         logging.warning("TOPP-RA not available, returning original waypoints")
-        return waypoints, len(waypoints) * control_cycle
+        zero_vel = np.zeros(waypoints.shape[1]) if waypoints.ndim > 1 else np.zeros(1)
+        return waypoints, len(waypoints) * control_cycle, zero_vel
     
     waypoints = np.asarray(waypoints, dtype=float)
     if waypoints.ndim == 1:
@@ -100,7 +106,8 @@ def toppra_time_optimal(
     
     H, D = waypoints.shape
     if H < 2:
-        return waypoints, 0.0
+        zero_vel = np.zeros(D)
+        return waypoints, 0.0, zero_vel
     
     # 构建速度/加速度约束
     if np.isscalar(max_velocity):
@@ -129,11 +136,64 @@ def toppra_time_optimal(
         
         # TOPP-RA 算法求解
         instance = ta_algo.TOPPRA([pc_vel, pc_acc], path)
-        traj = instance.compute_trajectory()
+        
+        # 计算路径参数化
+        # sd (ds/dt) 是路径参数的速度
+        # 计算路径长度用于估算合适的 sd
+        path_length = np.sum(np.linalg.norm(np.diff(waypoints, axis=0), axis=1))
+        expected_duration = H * control_cycle  # 预期执行时间
+        
+        # 估算起始 sd
+        sd_start = 0.0
+        if start_velocity is not None:
+            start_vel_norm = np.linalg.norm(start_velocity)
+            if start_vel_norm > 0 and path_length > 0:
+                # sd = |dq/dt| / |dq/ds| ≈ |velocity| / (path_length / 1.0)
+                sd_start = start_vel_norm / path_length
+        
+        # 估算终点 sd
+        if maintain_end_velocity and path_length > 0:
+            # 使用"匀速"假设：整个路径以恒定速度执行
+            # sd_uniform = 1.0 / expected_duration (因为 s 从 0 到 1)
+            sd_end = 1.0 / expected_duration
+            # 如果有起始速度，终点速度可以保持相似
+            if sd_start > 0:
+                sd_end = max(sd_end, sd_start * 0.8)  # 略微减速但不归零
+        else:
+            sd_end = 0.0  # 传统行为：终点减速到零
+        
+        # 使用 compute_parameterization 计算路径参数化
+        try:
+            # 先计算可行的 sd 范围
+            feasible_range = instance.compute_feasible_sets()
+            if feasible_range is not None:
+                # 确保 sd_start 和 sd_end 在可行范围内
+                sd_max_start = feasible_range[0, 1] if len(feasible_range) > 0 else 1.0
+                sd_max_end = feasible_range[-1, 1] if len(feasible_range) > 0 else 1.0
+                sd_start = min(sd_start, sd_max_start * 0.9)  # 留一点余量
+                sd_end = min(sd_end, sd_max_end * 0.9)
+            
+            # 计算路径参数化
+            parameterization = instance.compute_parameterization(sd_start, sd_end)
+            if parameterization is None:
+                # 回退：尝试零终点速度
+                logging.debug("TOPP-RA parameterization with non-zero end velocity failed, trying zero end velocity")
+                parameterization = instance.compute_parameterization(sd_start, 0.0)
+            
+            if parameterization is None:
+                # 再次回退：使用默认
+                traj = instance.compute_trajectory()
+            else:
+                # 从参数化创建轨迹
+                traj = instance.compute_trajectory(sd_start, sd_end)
+                
+        except Exception as e:
+            logging.debug(f"compute_parameterization failed: {e}, falling back to default")
+            traj = instance.compute_trajectory()
         
         if traj is None:
             logging.warning("TOPP-RA failed to compute trajectory, returning original waypoints")
-            return waypoints, H * control_cycle
+            return waypoints, H * control_cycle, np.zeros(D)
         
         # 获取时间最优轨迹的总时长
         duration = traj.duration
@@ -143,11 +203,21 @@ def toppra_time_optimal(
         times = np.linspace(0, duration, n_samples)
         trajectory = np.array([traj(t) for t in times])
         
-        return trajectory, duration
+        # 计算终点速度（用于传递给下一个动作块）
+        # 使用数值差分估计
+        if len(trajectory) >= 2:
+            final_velocity = (trajectory[-1] - trajectory[-2]) / control_cycle
+        else:
+            final_velocity = np.zeros(D)
+        
+        logging.debug(f"TOPP-RA: sd_start={sd_start:.4f}, sd_end={sd_end:.4f}, "
+                     f"duration={duration:.3f}s, final_vel_norm={np.linalg.norm(final_velocity):.4f}")
+        
+        return trajectory, duration, final_velocity
         
     except Exception as e:
         logging.exception(f"TOPP-RA failed: {e}")
-        return waypoints, H * control_cycle
+        return waypoints, H * control_cycle, np.zeros(D)
 
 
 # ============ Ruckig 分段执行平滑 ============
@@ -405,11 +475,12 @@ class TrajectorySmoother:
         
         # Step 1: TOPP-RA 时间最优规划
         if self.use_toppra:
-            result, duration = toppra_time_optimal(
+            result, duration, final_vel = toppra_time_optimal(
                 waypoints=result,
                 max_velocity=self.toppra_max_velocity,
                 max_acceleration=self.toppra_max_acceleration,
                 control_cycle=self.control_cycle,
+                start_velocity=current_velocity,  # 传入当前速度
             )
             logging.debug(f"TOPP-RA output: {len(result)} points, duration={duration:.3f}s")
             
