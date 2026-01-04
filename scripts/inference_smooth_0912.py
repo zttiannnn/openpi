@@ -65,24 +65,19 @@ def inference_worker(
         if item is None:            # 收到结束标识
             del policy
             break
-        
-        # 统一使用 dict 协议，避免歧义
-        # item: dict with keys: idx, obs, anchor(optional), velocity(optional), acceleration(optional)
-        if isinstance(item, dict):
-            idx = item.get("idx")
-            obs = item.get("obs")
-            anchor = item.get("anchor")
-            current_velocity = item.get("velocity")
-            current_acceleration = item.get("acceleration")
-        # 兼容旧的 tuple 格式 (idx, obs, anchor, velocity)
-        elif isinstance(item, tuple):
-            idx, obs = item[0], item[1]
-            anchor = item[2] if len(item) > 2 else None
-            current_velocity = item[3] if len(item) > 3 else None
-            current_acceleration = item[4] if len(item) > 4 else None
+        # item expected to be (idx, obs, anchor, current_velocity) where anchor/velocity may be None
+        if isinstance(item, tuple) and len(item) == 4:
+            idx, obs, anchor, current_velocity = item
+        elif isinstance(item, tuple) and len(item) == 3:
+            idx, obs, anchor = item
+            current_velocity = None
+        elif isinstance(item, tuple) and len(item) == 2:
+            idx, obs = item
+            anchor = None
+            current_velocity = None
         else:
+            # unexpected message, skip
             continue
-            
         start_time = time.time()
         result = policy.infer(obs)
         infer_time = time.time() - start_time
@@ -116,20 +111,14 @@ def inference_worker(
                 if getattr(args, "use_ruckig", False) and RUCKIG_AVAILABLE and body.size > 0:
                     try:
                         vel = None
-                        acc = None
                         if current_velocity is not None:
                             vel = np.asarray(current_velocity, dtype=float)
                             if vel.shape[-1] == D:
                                 vel = vel[:-1] if D >= 2 else vel
-                        if current_acceleration is not None:
-                            acc = np.asarray(current_acceleration, dtype=float)
-                            if acc.shape[-1] == D:
-                                acc = acc[:-1] if D >= 2 else acc
                         
                         body = ruckig_smooth_actions(
                             actions=body,
                             current_velocity=vel,
-                            current_acceleration=acc,
                             max_velocity=args.ruckig_max_velocity,
                             max_acceleration=args.ruckig_max_acceleration,
                             max_jerk=args.ruckig_max_jerk,
@@ -516,11 +505,9 @@ def main():
     action_step_counter = 0  # 记录已执行的动作步数
     first = True
     
-    # 用于追踪速度和加速度（Ruckig 需要）
+    # 用于追踪速度（Ruckig 需要）
     last_executed_action = None
-    second_last_action = None
-    current_velocity = None
-    current_acceleration = None
+    current_velocity = None  # 估计的当前速度
 
     # robot.send_action_np(np.array([-7980, 20113, -2285, -7921, 37285,  1023,     0.]))
     # time.sleep(1)
@@ -558,15 +545,8 @@ def main():
                 except Exception:
                     anchor = None
             try:
-                # 使用 dict 协议传递，避免歧义
-                msg = {
-                    "idx": sent_idx,
-                    "obs": obs,
-                    "anchor": anchor,
-                    "velocity": current_velocity,
-                    "acceleration": current_acceleration,
-                }
-                in_q.put_nowait(msg)
+                # 传递 (idx, obs, anchor, current_velocity) 给 worker
+                in_q.put_nowait((sent_idx, obs, anchor, current_velocity))
                 sent_idx += 1
                 waiting_for_infer = True
                 action_step_counter = 0
@@ -671,19 +651,14 @@ def main():
             robot.send_action_np(action_to_send[:7])
             action_step_counter += 1
             
-            # 更新速度和加速度估计（用于下次 Ruckig）
+            # 更新速度估计（用于下次 Ruckig）
             action_arr = np.asarray(action_to_send, dtype=float)
             if last_executed_action is not None:
+                # 估计速度 = (当前动作 - 上一动作) / dt
                 try:
-                    new_velocity = (action_arr - last_executed_action) / step_time
-                    # 估计加速度 = (当前速度 - 上一速度) / dt
-                    if current_velocity is not None:
-                        current_acceleration = (new_velocity - current_velocity) / step_time
-                    current_velocity = new_velocity
+                    current_velocity = (action_arr - last_executed_action) / step_time
                 except Exception:
                     current_velocity = None
-                    current_acceleration = None
-            second_last_action = last_executed_action
             last_executed_action = action_arr.copy()
             # print(f'publish an action:{time.perf_counter()},action counter:{action_step_counter}')
 
