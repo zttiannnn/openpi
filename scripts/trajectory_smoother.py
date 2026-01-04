@@ -10,6 +10,7 @@ TOPP-RA + Ruckig 轨迹平滑模块（简化版）
 
 import numpy as np
 import logging
+import math
 from typing import Tuple, Optional, List
 
 # ============ 检测可用的库 ============
@@ -170,13 +171,20 @@ def toppra_time_optimal(
         # 使用 compute_parameterization 计算路径参数化
         try:
             # 先计算可行的 sd 范围
+            # NOTE: TOPP-RA feasible sets are expressed in terms of x = sd^2 (path velocity squared).
+            # If we clamp sd using x directly, sd becomes artificially tiny and duration can explode.
             feasible_range = instance.compute_feasible_sets()
-            if feasible_range is not None:
-                # 确保 sd_start 和 sd_end 在可行范围内
-                sd_max_start = feasible_range[0, 1] if len(feasible_range) > 0 else 1.0
-                sd_max_end = feasible_range[-1, 1] if len(feasible_range) > 0 else 1.0
-                sd_start = min(sd_start, sd_max_start * 0.9)  # 留一点余量
-                sd_end = min(sd_end, sd_max_end * 0.9)
+            if feasible_range is not None and len(feasible_range) > 0:
+                try:
+                    sd2_max_start = float(feasible_range[0, 1])
+                    sd2_max_end = float(feasible_range[-1, 1])
+                    sd_max_start = math.sqrt(max(sd2_max_start, 0.0))
+                    sd_max_end = math.sqrt(max(sd2_max_end, 0.0))
+                    sd_start = min(sd_start, sd_max_start * 0.9)  # 留一点余量
+                    sd_end = min(sd_end, sd_max_end * 0.9)
+                except Exception:
+                    # If anything looks off, avoid clamping (let TOPP-RA handle it internally)
+                    pass
             
             # 计算路径参数化
             parameterization = instance.compute_parameterization(sd_start, sd_end)
@@ -201,10 +209,36 @@ def toppra_time_optimal(
             return waypoints, H * control_cycle, np.zeros(D)
         
         # 获取时间最优轨迹的总时长
-        duration = traj.duration
+        duration = float(traj.duration)
+
+        # Real-time guard: if duration is absurd, avoid huge sampling cost and fall back.
+        expected_duration = float(H * control_cycle)
+        max_reasonable_duration = max(5.0, 20.0 * expected_duration)
+        if (not np.isfinite(duration)) or duration <= 0.0 or duration > max_reasonable_duration:
+            logging.warning(
+                "TOPP-RA produced abnormal duration=%.3fs (expected~%.3fs). Falling back to raw waypoints.",
+                duration,
+                expected_duration,
+            )
+            # Estimate final velocity from the raw waypoints for continuity.
+            if H >= 2 and control_cycle > 0:
+                final_velocity = (waypoints[-1] - waypoints[-2]) / control_cycle
+            else:
+                final_velocity = np.zeros(D)
+            return waypoints, expected_duration, final_velocity
         
-        # 按控制周期采样
+        # 按控制周期采样（带上限，避免 duration 偶发异常导致采样爆炸）
         n_samples = max(2, int(np.ceil(duration / control_cycle)) + 1)
+        n_samples_cap = 5000
+        if n_samples > n_samples_cap:
+            logging.warning(
+                "TOPP-RA sampling capped: n_samples=%d -> %d (duration=%.3fs control_cycle=%.4fs)",
+                n_samples,
+                n_samples_cap,
+                duration,
+                control_cycle,
+            )
+            n_samples = n_samples_cap
         times = np.linspace(0, duration, n_samples)
         trajectory = np.array([traj(t) for t in times])
         
