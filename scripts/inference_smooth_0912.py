@@ -11,6 +11,7 @@ import yaml
 import random
 import os
 from scripts.numpy_logger import NumpyCSVLogger
+from scripts.trajectory_smoother import TrajectorySmoother, smooth_action_chunk, TOPPRA_AVAILABLE, RUCKIG_AVAILABLE
 
 from openpi.policies import policy_config as _policy_config
 from openpi.models.tokenizer import PaligemmaTokenizer
@@ -51,26 +52,37 @@ def inference_worker(
     # 1. 只在该进程里加载一次模型 / CUDA
     policy = _policy_config.create_trained_policy(config, checkpoint_dir)
 
+
     while True:
         item = in_q.get()
         if item is None:            # 收到结束标识
             del policy
             break
-        # item expected to be (idx, obs, anchor) where anchor may be None
-        if isinstance(item, tuple) and len(item) == 3:
-            idx, obs, anchor = item
-        elif isinstance(item, tuple) and len(item) == 2:
-            idx, obs = item
-            anchor = None
+        
+        # 支持 dict 协议以传递速度/加速度信息
+        if isinstance(item, dict):
+            idx = item.get("idx")
+            obs = item.get("obs")
+            anchor = item.get("anchor")
+            current_velocity = item.get("velocity")
+            current_acceleration = item.get("acceleration")
+        # 兼容旧的 tuple 格式 (idx, obs, anchor)
+        elif isinstance(item, tuple):
+            idx, obs = item[0], item[1]
+            anchor = item[2] if len(item) > 2 else None
+            current_velocity = item[3] if len(item) > 3 else None
+            current_acceleration = item[4] if len(item) > 4 else None
         else:
             # unexpected message, skip
             continue
+            
         start_time = time.time()
         result = policy.infer(obs)
         infer_time = time.time() - start_time
         print(f"Step {idx}: infer time = {infer_time:.4f} seconds")
         actions = result.get("actions")
-        # perform horizon-level smoothing and optional QP optimization in worker
+        
+        # perform horizon-level smoothing and optional trajectory optimization in worker
         try:
             if actions is not None:
                 arr = np.asarray(actions, dtype=float)
@@ -85,21 +97,52 @@ def inference_worker(
                     body = arr
                     grip = None
 
-                # smooth only the body (joints)
+                # Step 1: Horizon-level EMA/移动平滑
                 if getattr(args, "horizon_smooth", "none") != "none" and body.size > 0:
                     try:
                         body = smooth_horizon(body, method=args.horizon_smooth, window=args.horizon_window, ema_alpha=args.horizon_ema_alpha)
                     except Exception:
                         logging.exception("worker horizon smoothing failed")
 
-                # QP optimization only on body
+                # Step 2: TOPP-RA + Ruckig 轨迹平滑 (在 EMA 之后)
+                if (getattr(args, "use_toppra", False) or getattr(args, "use_ruckig", False)) and body.size > 0:
+                    try:
+                        # 处理速度和加速度（排除 gripper 维度）
+                        vel = None
+                        acc = None
+                        if current_velocity is not None:
+                            vel = np.asarray(current_velocity, dtype=float)
+                            if len(vel) == D:
+                                vel = vel[:-1] if D >= 2 else vel
+                        if current_acceleration is not None:
+                            acc = np.asarray(current_acceleration, dtype=float)
+                            if len(acc) == D:
+                                acc = acc[:-1] if D >= 2 else acc
+                        
+                        body = smooth_action_chunk(
+                            actions=body,
+                            current_velocity=vel,
+                            current_acceleration=acc,
+                            control_cycle=1.0 / args.fps,
+                            toppra_max_velocity=getattr(args, "toppra_max_velocity", 1.0),
+                            toppra_max_acceleration=getattr(args, "toppra_max_acceleration", 2.0),
+                            ruckig_max_velocity=getattr(args, "ruckig_max_velocity", 1.0),
+                            ruckig_max_acceleration=getattr(args, "ruckig_max_acceleration", 2.0),
+                            ruckig_max_jerk=getattr(args, "ruckig_max_jerk", 5.0),
+                            use_toppra=getattr(args, "use_toppra", False),
+                            use_ruckig=getattr(args, "use_ruckig", False),
+                        )
+                    except Exception as e:
+                        logging.exception("worker TOPP-RA/Ruckig smoothing failed: %s", e)
+
+                # Step 3: QP optimization only on body (可选，可与 TOPP-RA/Ruckig 并用)
                 if getattr(args, "qp_lambda_acc", 0.0) and args.qp_lambda_acc > 0 and body.size > 0:
                     try:
                         body = optimize_horizon_qp(body, lambda_acc=args.qp_lambda_acc, velocity_limit=args.qp_velocity_limit, anchor=anchor)
                     except Exception as e:
                         logging.exception("worker qp optimization failed: %s", e)
 
-                # recombine
+                # recombine body + gripper
                 if grip is None:
                     actions = body
                 else:
@@ -107,6 +150,7 @@ def inference_worker(
         except Exception as e:
             logging.exception("worker horizon postprocessing failed, falling back to raw actions: %s", e)
         out_q.put((idx, actions))
+
 
 def _apply_transition(old_actions, new_actions, h_fn):
     """
@@ -300,6 +344,16 @@ def main():
     # QP-style online optimizer options
     parser.add_argument("--qp_lambda_acc", type=float, default=0.0, help="二阶差分加速惩罚系数（>=0），qp优化时使用。0 表示禁用")
     parser.add_argument("--qp_velocity_limit", type=float, default=0.0, help="可选的每步最大速度（动作单位/step），>0 则启用简单束缚后处理")
+    
+    # ============ TOPP-RA + Ruckig 轨迹平滑参数 ============
+    parser.add_argument("--use_toppra", action="store_true", help="启用 TOPP-RA 时间最优路径规划")
+    parser.add_argument("--toppra_max_velocity", type=float, default=1.0, help="TOPP-RA 关节最大速度")
+    parser.add_argument("--toppra_max_acceleration", type=float, default=2.0, help="TOPP-RA 关节最大加速度")
+    parser.add_argument("--use_ruckig", action="store_true", help="启用 Ruckig jerk-limited 轨迹平滑（可选增强）")
+    parser.add_argument("--ruckig_max_velocity", type=float, default=1.0, help="Ruckig 关节最大速度")
+    parser.add_argument("--ruckig_max_acceleration", type=float, default=2.0, help="Ruckig 关节最大加速度")
+    parser.add_argument("--ruckig_max_jerk", type=float, default=5.0, help="Ruckig 关节最大 jerk")
+    
     # speed or pose
     parser.add_argument("--mode", type=str, required=False, default="pose", help="inference mode")
     # jitter seed
@@ -363,6 +417,11 @@ def main():
     waiting_for_infer = False
     action_step_counter = 0  # 记录已执行的动作步数
     first = True
+    
+    # 速度/加速度追踪（用于 TOPP-RA + Ruckig）
+    last_executed_action = None
+    current_velocity = None
+    current_acceleration = None
 
     # robot.send_action_np(np.array([-7980, 20113, -2285, -7921, 37285,  1023,     0.]))
     # time.sleep(1)
@@ -400,7 +459,15 @@ def main():
                 except Exception:
                     anchor = None
             try:
-                in_q.put_nowait((sent_idx, obs, anchor))
+                # 使用 dict 协议传递，支持速度/加速度信息
+                msg = {
+                    "idx": sent_idx,
+                    "obs": obs,
+                    "anchor": anchor,
+                    "velocity": current_velocity,
+                    "acceleration": current_acceleration,
+                }
+                in_q.put_nowait(msg)
                 sent_idx += 1
                 waiting_for_infer = True
                 action_step_counter = 0
@@ -504,7 +571,19 @@ def main():
                 logger.log(action_to_send[:7])
             robot.send_action_np(action_to_send[:7])
             action_step_counter += 1
-            # print(f'publish an action:{time.perf_counter()},action counter:{action_step_counter}')
+            
+            # 更新速度和加速度估计（用于下次 TOPP-RA/Ruckig）
+            action_arr = np.asarray(action_to_send, dtype=float)
+            if last_executed_action is not None:
+                try:
+                    new_velocity = (action_arr - last_executed_action) / step_time
+                    if current_velocity is not None:
+                        current_acceleration = (new_velocity - current_velocity) / step_time
+                    current_velocity = new_velocity
+                except Exception:
+                    current_velocity = None
+                    current_acceleration = None
+            last_executed_action = action_arr.copy()
 
         # 2.5 统计
         i += 1
