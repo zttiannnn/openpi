@@ -210,7 +210,7 @@ def toppra_time_optimal(
         else:
             final_velocity = np.zeros(D)
         
-        logging.debug(f"TOPP-RA: sd_start={sd_start:.4f}, sd_end={sd_end:.4f}, "
+        logging.info(f"TOPP-RA: sd_start={sd_start:.4f}, sd_end={sd_end:.4f}, "
                      f"duration={duration:.3f}s, final_vel_norm={np.linalg.norm(final_velocity):.4f}")
         
         return trajectory, duration, final_velocity

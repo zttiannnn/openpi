@@ -362,6 +362,12 @@ def main():
 
     set_seeds(args.seed)
 
+    # 配置 logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+
     logger = NumpyCSVLogger("/home/test/test_tra/12500_ewa_07_1.csv", mode="w")
     print_log = True
 
