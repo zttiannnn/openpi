@@ -48,6 +48,11 @@ def inference_worker(
     checkpoint_dir,
     args,
 ):
+    # 配置子进程 logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='[Worker] %(asctime)s - %(levelname)s - %(message)s'
+    )
 
     # 1. 只在该进程里加载一次模型 / CUDA
     policy = _policy_config.create_trained_policy(config, checkpoint_dir)
