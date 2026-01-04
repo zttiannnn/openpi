@@ -10,6 +10,8 @@ import collections
 import yaml
 import random
 import os
+import sys
+from dataclasses import dataclass
 from scripts.numpy_logger import NumpyCSVLogger
 from scripts.trajectory_smoother import TrajectorySmoother, smooth_action_chunk, TOPPRA_AVAILABLE, RUCKIG_AVAILABLE
 
@@ -20,6 +22,23 @@ from third_party.agilex.agilexfollower import AlohaAgileXFollower
 from third_party.agilex.agilexconfig import AlohaAgileXFollowerConfig
 from third_party.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from third_party.cameras.orbbec.configuration_orbbec import OrbbecCameraConfig
+
+
+@dataclass
+class _PerfStats:
+    obs_s: float = 0.0
+    infer_s: float = 0.0
+    worker_post_s: float = 0.0
+    loop_s: float = 0.0
+    send_s: float = 0.0
+
+
+def _now() -> float:
+    return time.perf_counter()
+
+
+def _fmt_ms(s: float) -> str:
+    return f"{s*1000.0:.1f}ms"
 
 def make_camera_config(cfg: dict):
     t = cfg.get('type')
@@ -57,6 +76,18 @@ def inference_worker(
     # 1. 只在该进程里加载一次模型 / CUDA
     policy = _policy_config.create_trained_policy(config, checkpoint_dir)
 
+    # Print import/runtime context once (helps detect wrong module/env)
+    try:
+        import scripts.trajectory_smoother as _ts
+        logging.info(
+            "trajectory_smoother=%s TOPPRA_AVAILABLE=%s RUCKIG_AVAILABLE=%s",
+            getattr(_ts, "__file__", "<unknown>"),
+            getattr(_ts, "TOPPRA_AVAILABLE", None),
+            getattr(_ts, "RUCKIG_AVAILABLE", None),
+        )
+    except Exception:
+        logging.exception("Failed to import scripts.trajectory_smoother inside worker")
+
 
     while True:
         item = in_q.get()
@@ -81,13 +112,14 @@ def inference_worker(
             # unexpected message, skip
             continue
             
-        start_time = time.time()
+        t_infer0 = _now()
         result = policy.infer(obs)
-        infer_time = time.time() - start_time
-        print(f"Step {idx}: infer time = {infer_time:.4f} seconds")
+        infer_time = _now() - t_infer0
+        print(f"Step {idx}: infer time = {infer_time:.4f} seconds", flush=True)
         actions = result.get("actions")
         
         # perform horizon-level smoothing and optional trajectory optimization in worker
+        t_post0 = _now()
         try:
             if actions is not None:
                 arr = np.asarray(actions, dtype=float)
@@ -154,6 +186,21 @@ def inference_worker(
                     actions = np.concatenate([body, grip], axis=1)
         except Exception as e:
             logging.exception("worker horizon postprocessing failed, falling back to raw actions: %s", e)
+        post_time = _now() - t_post0
+        # Emit one line per inference; helps spot TOPP-RA slowness even if infer is fast
+        try:
+            if getattr(args, "profile", False):
+                logging.info(
+                    "worker idx=%s post=%s (infer=%s) use_toppra=%s use_ruckig=%s horizon=%s",
+                    idx,
+                    _fmt_ms(post_time),
+                    _fmt_ms(infer_time),
+                    getattr(args, "use_toppra", False),
+                    getattr(args, "use_ruckig", False),
+                    getattr(args, "horizon_smooth", "none"),
+                )
+        except Exception:
+            pass
         out_q.put((idx, actions))
 
 
@@ -358,6 +405,10 @@ def main():
     parser.add_argument("--ruckig_max_velocity", type=float, default=1.0, help="Ruckig 关节最大速度")
     parser.add_argument("--ruckig_max_acceleration", type=float, default=2.0, help="Ruckig 关节最大加速度")
     parser.add_argument("--ruckig_max_jerk", type=float, default=5.0, help="Ruckig 关节最大 jerk")
+
+    # Profiling / diagnostics (prints timing that explains stutter)
+    parser.add_argument("--profile", action="store_true", help="打印关键耗时打点（观测/推理/后处理/控制循环）")
+    parser.add_argument("--loop_warn_s", type=float, default=0.2, help="控制循环耗时超过该阈值就报警(秒)")
     
     # speed or pose
     parser.add_argument("--mode", type=str, required=False, default="pose", help="inference mode")
@@ -372,6 +423,23 @@ def main():
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
+
+    # Print import context once (helps detect running a different file/module than expected)
+    try:
+        import scripts.trajectory_smoother as _ts
+        logging.info(
+            "main module=%s python=%s",
+            __file__,
+            sys.executable,
+        )
+        logging.info(
+            "trajectory_smoother=%s TOPPRA_AVAILABLE=%s RUCKIG_AVAILABLE=%s",
+            getattr(_ts, "__file__", "<unknown>"),
+            getattr(_ts, "TOPPRA_AVAILABLE", None),
+            getattr(_ts, "RUCKIG_AVAILABLE", None),
+        )
+    except Exception:
+        logging.exception("Failed to import scripts.trajectory_smoother inside main")
 
     logger = NumpyCSVLogger("/home/test/test_tra/12500_ewa_07_1.csv", mode="w")
     print_log = True
@@ -436,13 +504,17 @@ def main():
 
     # robot.send_action_np(np.array([-7980, 20113, -2285, -7921, 37285,  1023,     0.]))
     # time.sleep(1)
+    perf = _PerfStats()
+
     while i < kMaxTimeStamps:
-        t0 = time.perf_counter()
+        t0 = _now()
 
         # 1. 只有在执行了action_steps步后才采集观测并推理
         if not waiting_for_infer and (action_step_counter >= args.action_steps or first):
             first = False
+            t_obs0 = _now()
             obs = robot.get_observation()
+            perf.obs_s = _now() - t_obs0
             # Ensure obs["state"] is a numpy array
             state7 = np.asarray(obs.get("state"))
             if args.mode == "speed":
@@ -484,6 +556,15 @@ def main():
                 action_step_counter = 0
             except mp.queues.Full:
                 logging.debug("inference queue full, dropping frame")
+
+            if args.profile:
+                logging.info(
+                    "main sent idx=%s obs=%s q(action)=%s waiting=%s",
+                    sent_idx - 1,
+                    _fmt_ms(perf.obs_s),
+                    len(action_queue),
+                    waiting_for_infer,
+                )
 
         # 2. 如果有新推理结果，立即清空并更新 action_queue
         try:
@@ -572,6 +653,20 @@ def main():
                 action_queue.append(a)
 
             waiting_for_infer = False
+
+            if args.profile:
+                try:
+                    arr = np.asarray(action_vals)
+                    shape = tuple(arr.shape)
+                except Exception:
+                    shape = "?"
+                logging.info(
+                    "main recv idx=%s actions_shape=%s queued=%s old_pending=%s",
+                    recv_idx,
+                    shape,
+                    len(action_queue),
+                    len(old_actions),
+                )
         except mp.queues.Empty:
             pass
 
@@ -580,7 +675,9 @@ def main():
             action_to_send = action_queue.popleft()
             if print_log:
                 logger.log(action_to_send[:7])
+            t_send0 = _now()
             robot.send_action_np(action_to_send[:7])
+            perf.send_s = _now() - t_send0
             action_step_counter += 1
             
             # 更新速度和加速度估计（用于下次 TOPP-RA/Ruckig）
@@ -598,8 +695,19 @@ def main():
 
         # 2.5 统计
         i += 1
-        dt_s = time.perf_counter() - t0
+        dt_s = _now() - t0
+        perf.loop_s = dt_s
         # print(f"loop {i} dt={dt_s:.3f} s")
+        if args.profile and dt_s > args.loop_warn_s:
+            logging.warning(
+                "loop slow dt=%s (obs=%s send=%s) action_queue=%s waiting=%s step_counter=%s",
+                _fmt_ms(dt_s),
+                _fmt_ms(perf.obs_s),
+                _fmt_ms(perf.send_s),
+                len(action_queue),
+                waiting_for_infer,
+                action_step_counter,
+            )
         time.sleep(max(step_time - dt_s,0))
 
     # ==== 3. 结束 ====

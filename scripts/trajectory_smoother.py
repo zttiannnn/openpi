@@ -95,6 +95,11 @@ def toppra_time_optimal(
         duration: 轨迹总时长（秒）
         final_velocity: (D,) 轨迹终点速度
     """
+    t0 = None
+    try:
+        t0 = __import__("time").perf_counter()
+    except Exception:
+        t0 = None
     if not TOPPRA_AVAILABLE:
         logging.warning("TOPP-RA not available, returning original waypoints")
         zero_vel = np.zeros(waypoints.shape[1]) if waypoints.ndim > 1 else np.zeros(1)
@@ -210,8 +215,29 @@ def toppra_time_optimal(
         else:
             final_velocity = np.zeros(D)
         
-        logging.info(f"TOPP-RA: sd_start={sd_start:.4f}, sd_end={sd_end:.4f}, "
-                     f"duration={duration:.3f}s, final_vel_norm={np.linalg.norm(final_velocity):.4f}")
+        if t0 is not None:
+            t1 = __import__("time").perf_counter()
+            solve_ms = (t1 - t0) * 1000.0
+        else:
+            solve_ms = None
+
+        if solve_ms is None:
+            logging.info(
+                "TOPP-RA: sd_start=%.4f sd_end=%.4f duration=%.3fs final_vel_norm=%.4f",
+                sd_start,
+                sd_end,
+                duration,
+                float(np.linalg.norm(final_velocity)),
+            )
+        else:
+            logging.info(
+                "TOPP-RA: sd_start=%.4f sd_end=%.4f duration=%.3fs final_vel_norm=%.4f solve=%.1fms",
+                sd_start,
+                sd_end,
+                duration,
+                float(np.linalg.norm(final_velocity)),
+                solve_ms,
+            )
         
         return trajectory, duration, final_velocity
         
