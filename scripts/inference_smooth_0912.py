@@ -67,10 +67,12 @@ def inference_worker(
     checkpoint_dir,
     args,
 ):
-    # 配置子进程 logging
+    # 配置子进程 logging（force=True 避免被其他库提前配置导致 basicConfig 不生效）
     logging.basicConfig(
         level=logging.INFO,
-        format='[Worker] %(asctime)s - %(levelname)s - %(message)s'
+        format='[Worker] %(asctime)s - %(levelname)s - %(message)s',
+        handlers=[logging.StreamHandler(sys.stdout)],
+        force=True,
     )
 
     # 1. 只在该进程里加载一次模型 / CUDA
@@ -418,10 +420,12 @@ def main():
 
     set_seeds(args.seed)
 
-    # 配置 logging
+    # 配置 logging（force=True 避免被其他库提前配置导致 basicConfig 不生效）
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
+        format='[Main] %(asctime)s - %(levelname)s - %(message)s',
+        handlers=[logging.StreamHandler(sys.stdout)],
+        force=True,
     )
 
     # Print import context once (helps detect running a different file/module than expected)
