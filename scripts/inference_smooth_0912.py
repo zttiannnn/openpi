@@ -12,15 +12,6 @@ import random
 import os
 from scripts.numpy_logger import NumpyCSVLogger
 
-# Ruckig for jerk-limited trajectory generation
-# Note: intermediate waypoints require Ruckig Pro or cloud API (pip install ruckig enables cloud API)
-try:
-    from ruckig import InputParameter, OutputParameter, Result, Ruckig
-    RUCKIG_AVAILABLE = True
-except ImportError:
-    RUCKIG_AVAILABLE = False
-    logging.warning("Ruckig not installed. Install via 'pip install ruckig' to enable smooth trajectory generation.")
-
 from openpi.policies import policy_config as _policy_config
 from openpi.models.tokenizer import PaligemmaTokenizer
 from openpi.training import config as _config
@@ -65,16 +56,12 @@ def inference_worker(
         if item is None:            # 收到结束标识
             del policy
             break
-        # item expected to be (idx, obs, anchor, current_velocity) where anchor/velocity may be None
-        if isinstance(item, tuple) and len(item) == 4:
-            idx, obs, anchor, current_velocity = item
-        elif isinstance(item, tuple) and len(item) == 3:
+        # item expected to be (idx, obs, anchor) where anchor may be None
+        if isinstance(item, tuple) and len(item) == 3:
             idx, obs, anchor = item
-            current_velocity = None
         elif isinstance(item, tuple) and len(item) == 2:
             idx, obs = item
             anchor = None
-            current_velocity = None
         else:
             # unexpected message, skip
             continue
@@ -83,9 +70,7 @@ def inference_worker(
         infer_time = time.time() - start_time
         print(f"Step {idx}: infer time = {infer_time:.4f} seconds")
         actions = result.get("actions")
-        
-        # ========== 动作后处理流水线 ==========
-        # 流程: 模型输出 → EMA horizon平滑(optional) → Ruckig(optional) → QP(optional)
+        # perform horizon-level smoothing and optional QP optimization in worker
         try:
             if actions is not None:
                 arr = np.asarray(actions, dtype=float)
@@ -100,42 +85,21 @@ def inference_worker(
                     body = arr
                     grip = None
 
-                # Step 1: Horizon-level EMA/移动平滑 (optional)
+                # smooth only the body (joints)
                 if getattr(args, "horizon_smooth", "none") != "none" and body.size > 0:
                     try:
                         body = smooth_horizon(body, method=args.horizon_smooth, window=args.horizon_window, ema_alpha=args.horizon_ema_alpha)
                     except Exception:
                         logging.exception("worker horizon smoothing failed")
 
-                # Step 2: Ruckig jerk-limited 轨迹生成 (optional)
-                if getattr(args, "use_ruckig", False) and RUCKIG_AVAILABLE and body.size > 0:
-                    try:
-                        vel = None
-                        if current_velocity is not None:
-                            vel = np.asarray(current_velocity, dtype=float)
-                            if vel.shape[-1] == D:
-                                vel = vel[:-1] if D >= 2 else vel
-                        
-                        body = ruckig_smooth_actions(
-                            actions=body,
-                            current_velocity=vel,
-                            max_velocity=args.ruckig_max_velocity,
-                            max_acceleration=args.ruckig_max_acceleration,
-                            max_jerk=args.ruckig_max_jerk,
-                            control_cycle=1.0 / args.fps,
-                            waypoint_threshold=args.ruckig_waypoint_threshold if args.ruckig_waypoint_threshold > 0 else None,
-                        )
-                    except Exception as e:
-                        logging.exception("worker ruckig failed: %s", e)
-
-                # Step 3: QP optimization only on body (optional, 可与 Ruckig 并用进一步优化)
+                # QP optimization only on body
                 if getattr(args, "qp_lambda_acc", 0.0) and args.qp_lambda_acc > 0 and body.size > 0:
                     try:
                         body = optimize_horizon_qp(body, lambda_acc=args.qp_lambda_acc, velocity_limit=args.qp_velocity_limit, anchor=anchor)
                     except Exception as e:
                         logging.exception("worker qp optimization failed: %s", e)
 
-                # recombine body + gripper
+                # recombine
                 if grip is None:
                     actions = body
                 else:
@@ -234,102 +198,6 @@ def smooth_horizon(actions: np.ndarray, method: str = "none", window: int = 3, e
         return sm
     else:
         raise ValueError(f"Unknown horizon smoothing method: {method!r}")
-
-# ============ Ruckig 轨迹生成相关函数 ============
-
-def ruckig_smooth_actions(
-    actions: np.ndarray,
-    current_velocity: np.ndarray | None = None,
-    current_acceleration: np.ndarray | None = None,
-    max_velocity: np.ndarray | float = 1.0,
-    max_acceleration: np.ndarray | float = 2.0,
-    max_jerk: np.ndarray | float = 5.0,
-    control_cycle: float = 0.033,
-    waypoint_threshold: float | None = None,  # 用于 filter_intermediate_positions 的阈值
-) -> np.ndarray:
-    """
-    使用 Ruckig 对动作块进行 jerk-limited 平滑。
-    
-    actions: shape (H, D), H 个动作
-    waypoint_threshold: 传给 ruckig.filter_intermediate_positions 的阈值向量（per-DoF），None 则不过滤
-    Returns: shape (H, D), 平滑后的轨迹
-    """
-    if not RUCKIG_AVAILABLE:
-        logging.warning("Ruckig not available, returning original actions")
-        return actions
-    
-    actions = np.asarray(actions, dtype=float)
-    if actions.ndim == 1:
-        actions = actions[None, :]
-    H, D = actions.shape
-    if H < 2:
-        return actions
-    
-    # 默认值
-    vel = np.zeros(D) if current_velocity is None else np.asarray(current_velocity, dtype=float)
-    acc = np.zeros(D) if current_acceleration is None else np.asarray(current_acceleration, dtype=float)
-    max_vel = np.full(D, max_velocity) if np.isscalar(max_velocity) else np.asarray(max_velocity)
-    max_acc = np.full(D, max_acceleration) if np.isscalar(max_acceleration) else np.asarray(max_acceleration)
-    max_jrk = np.full(D, max_jerk) if np.isscalar(max_jerk) else np.asarray(max_jerk)
-    
-    try:
-        # 准备 intermediate waypoints (不含首尾)
-        intermediate = [actions[i].tolist() for i in range(1, H - 1)]
-        
-        ruckig = Ruckig(D, control_cycle, max(len(intermediate), 1))
-        inp = InputParameter(D, max(len(intermediate), 1))
-        out = OutputParameter(D, max(len(intermediate), 1))
-        
-        # 使用 Ruckig 的 filter_intermediate_positions 过滤
-        if intermediate and waypoint_threshold is not None:
-            threshold = np.full(D, waypoint_threshold) if np.isscalar(waypoint_threshold) else waypoint_threshold
-            try:
-                intermediate = ruckig.filter_intermediate_positions(intermediate, threshold.tolist())
-                logging.debug(f"Ruckig filtered to {len(intermediate)} intermediate waypoints")
-            except Exception as e:
-                logging.debug(f"filter_intermediate_positions failed: {e}")
-        
-        # 设置输入
-        inp.current_position = actions[0].tolist()
-        inp.current_velocity = vel.tolist()
-        inp.current_acceleration = acc.tolist()
-        inp.target_position = actions[-1].tolist()
-        inp.target_velocity = [0.0] * D
-        inp.target_acceleration = [0.0] * D
-        inp.max_velocity = max_vel.tolist()
-        inp.max_acceleration = max_acc.tolist()
-        inp.max_jerk = max_jrk.tolist()
-        if intermediate:
-            inp.intermediate_positions = intermediate
-        
-        # 生成轨迹
-        trajectory = []
-        for _ in range(int(100.0 / control_cycle)):  # 最多100秒
-            result = ruckig.update(inp, out)
-            trajectory.append(np.array(out.new_position))
-            if result == Result.Finished:
-                break
-            elif result == Result.Working:
-                out.pass_to_input(inp)
-            else:
-                logging.warning(f"Ruckig error: {result}")
-                break
-        
-        if not trajectory:
-            return actions
-        
-        # 重采样到原始步数
-        traj = np.array(trajectory)
-        if len(traj) != H:
-            indices = np.linspace(0, len(traj) - 1, H)
-            traj = np.array([np.interp(indices, np.arange(len(traj)), traj[:, d]) for d in range(D)]).T
-        
-        return traj
-        
-    except Exception as e:
-        logging.exception(f"Ruckig failed: {e}")
-        return actions
-
 
 def set_seeds(seed):
     os.environ.setdefault("PYTHONHASHSEED", str(seed))
@@ -432,15 +300,6 @@ def main():
     # QP-style online optimizer options
     parser.add_argument("--qp_lambda_acc", type=float, default=0.0, help="二阶差分加速惩罚系数（>=0），qp优化时使用。0 表示禁用")
     parser.add_argument("--qp_velocity_limit", type=float, default=0.0, help="可选的每步最大速度（动作单位/step），>0 则启用简单束缚后处理")
-    
-    # ============ Ruckig 轨迹生成选项 ============
-    parser.add_argument("--use_ruckig", action="store_true", help="启用 Ruckig jerk-limited 轨迹生成")
-    parser.add_argument("--ruckig_max_velocity", type=float, default=1.0, help="Ruckig 关节最大速度限制")
-    parser.add_argument("--ruckig_max_acceleration", type=float, default=2.0, help="Ruckig 关节最大加速度限制")
-    parser.add_argument("--ruckig_max_jerk", type=float, default=5.0, help="Ruckig 关节最大加加速度(jerk)限制")
-    parser.add_argument("--ruckig_waypoint_threshold", type=float, default=0.1, 
-                        help="filter_intermediate_positions 的阈值 (per-DoF)，0 表示不过滤")
-    
     # speed or pose
     parser.add_argument("--mode", type=str, required=False, default="pose", help="inference mode")
     # jitter seed
@@ -504,10 +363,6 @@ def main():
     waiting_for_infer = False
     action_step_counter = 0  # 记录已执行的动作步数
     first = True
-    
-    # 用于追踪速度（Ruckig 需要）
-    last_executed_action = None
-    current_velocity = None  # 估计的当前速度
 
     # robot.send_action_np(np.array([-7980, 20113, -2285, -7921, 37285,  1023,     0.]))
     # time.sleep(1)
@@ -545,8 +400,7 @@ def main():
                 except Exception:
                     anchor = None
             try:
-                # 传递 (idx, obs, anchor, current_velocity) 给 worker
-                in_q.put_nowait((sent_idx, obs, anchor, current_velocity))
+                in_q.put_nowait((sent_idx, obs, anchor))
                 sent_idx += 1
                 waiting_for_infer = True
                 action_step_counter = 0
@@ -650,16 +504,6 @@ def main():
                 logger.log(action_to_send[:7])
             robot.send_action_np(action_to_send[:7])
             action_step_counter += 1
-            
-            # 更新速度估计（用于下次 Ruckig）
-            action_arr = np.asarray(action_to_send, dtype=float)
-            if last_executed_action is not None:
-                # 估计速度 = (当前动作 - 上一动作) / dt
-                try:
-                    current_velocity = (action_arr - last_executed_action) / step_time
-                except Exception:
-                    current_velocity = None
-            last_executed_action = action_arr.copy()
             # print(f'publish an action:{time.perf_counter()},action counter:{action_step_counter}')
 
         # 2.5 统计
