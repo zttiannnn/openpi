@@ -216,26 +216,36 @@ def main():
     # 分析文件
     data = analyze_trajectory_file(args.input, args.dt)
     
+    # 获取输入文件名（不含扩展名）用于命名
+    base_name = os.path.splitext(os.path.basename(args.input))[0]
+    
     # 绘制图表
+    if "executed" in data:
+        fig = plot_single_trajectory(
+            data["executed"], args.dt,
+            title=f"Trajectory: {base_name} (executed)",
+            save_path=os.path.join(args.output_dir, f"{base_name}.png")
+        )
+
     if "original" in data:
         fig = plot_single_trajectory(
             data["original"], args.dt,
-            title="Original Trajectory",
-            save_path=os.path.join(args.output_dir, "original.png")
+            title=f"Trajectory: {base_name} (original)",
+            save_path=os.path.join(args.output_dir, f"{base_name}_original.png")
         )
     
     if "smoothed" in data:
         fig = plot_single_trajectory(
             data["smoothed"], args.dt,
-            title="Smoothed Trajectory",
-            save_path=os.path.join(args.output_dir, "smoothed.png")
+            title=f"Trajectory: {base_name} (smoothed)",
+            save_path=os.path.join(args.output_dir, f"{base_name}_smoothed.png")
         )
     
     if "original" in data and "smoothed" in data:
         fig = plot_comparison(
             data["original"], data["smoothed"], args.dt,
-            title="Original vs Smoothed",
-            save_path=os.path.join(args.output_dir, "comparison.png")
+            title=f"Comparison: {base_name}",
+            save_path=os.path.join(args.output_dir, f"{base_name}_comparison.png")
         )
     
     if args.show:
