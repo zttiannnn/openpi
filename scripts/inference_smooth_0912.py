@@ -416,11 +416,11 @@ def main():
     # 注意：AgileX follower 这套动作通常是 pulse 量级（数值可到 1e4~1e5），
     # 若仍用 1.0/2.0 这种默认值，会导致 TOPP-RA 规划出的 duration 极度夸张（几十万秒），并造成卡顿。
     parser.add_argument("--toppra_max_velocity", type=float, default=200000.0, help="TOPP-RA 关节最大速度 (pulse/s)")
-    parser.add_argument("--toppra_max_acceleration", type=float, default=500000.0, help="TOPP-RA 关节最大加速度 (pulse/s^2)")
+    parser.add_argument("--toppra_max_acceleration", type=float, default=200000.0, help="TOPP-RA 关节最大加速度 (pulse/s^2)")
     parser.add_argument("--use_ruckig", action="store_true", help="启用 Ruckig jerk-limited 轨迹平滑（可选增强）")
     parser.add_argument("--ruckig_max_velocity", type=float, default=200000.0, help="Ruckig 关节最大速度 (pulse/s)")
-    parser.add_argument("--ruckig_max_acceleration", type=float, default=500000.0, help="Ruckig 关节最大加速度 (pulse/s^2)")
-    parser.add_argument("--ruckig_max_jerk", type=float, default=2000000.0, help="Ruckig 关节最大 jerk (pulse/s^3)")
+    parser.add_argument("--ruckig_max_acceleration", type=float, default=200000.0, help="Ruckig 关节最大加速度 (pulse/s^2)")
+    parser.add_argument("--ruckig_max_jerk", type=float, default=200000.0, help="Ruckig 关节最大 jerk (pulse/s^3)")
 
     # Profiling / diagnostics (prints timing that explains stutter)
     parser.add_argument("--profile", action="store_true", help="打印关键耗时打点（观测/推理/后处理/控制循环）")

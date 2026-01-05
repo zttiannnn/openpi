@@ -142,8 +142,8 @@ def toppra_time_optimal(
         
         # TOPP-RA 算法求解
         # 显式指定 gridpoints 以减少计算时间 (默认自动计算可能会产生数万个点，导致计算耗时 >1s)
-        # 对于 50 个点的轨迹，500-1000 个 gridpoints 通常足够保证精度且计算仅需几十毫秒
-        instance = ta_algo.TOPPRA([pc_vel, pc_acc], path, gridpoints=np.linspace(0, 1, 50))
+        # 50点可能太粗糙导致抖动，200点大约耗时 10-20ms，足够平滑且快速
+        instance = ta_algo.TOPPRA([pc_vel, pc_acc], path, gridpoints=np.linspace(0, 1, 200))
         
         # 计算路径参数化
         # sd (ds/dt) 是路径参数的速度
@@ -183,44 +183,65 @@ def toppra_time_optimal(
                     sd_max_start = math.sqrt(max(sd2_max_start, 0.0))
                     sd_max_end = math.sqrt(max(sd2_max_end, 0.0))
                     
-                    # 检查起始速度是否超出可控范围（日志中出现 The initial velocity is not controllable）
-                    # 如果超出，强制限制到最大可行值
+                    # 检查起始速度是否超出可控范围
                     if sd_start > sd_max_start:
                         logging.warning(
                             "TOPP-RA start velocity uncontrollable: requested %.4f > feasible %.4f. Clamping.",
                             sd_start, sd_max_start
                         )
-                        sd_start = sd_max_start * 0.99
-                        
+                        sd_start = sd_max_start * 0.95  # 留更多余量
+                    
+                    # 检查终点速度是否超出可控范围
                     if sd_end > sd_max_end:
-                        sd_end = sd_max_end * 0.99
+                        logging.warning(
+                            "TOPP-RA end velocity uncontrollable: requested %.4f > feasible %.4f. Clamping.",
+                            sd_end, sd_max_end
+                        )
+                        sd_end = sd_max_end * 0.95
                 except Exception:
                     # If anything looks off, avoid clamping (let TOPP-RA handle it internally)
                     pass
             
-            # 计算路径参数化
-            parameterization = instance.compute_parameterization(sd_start, sd_end)
+            # 追踪实际使用的 sd 值（用于后续 compute_trajectory）
+            sd_start_used = sd_start
+            sd_end_used = sd_end
             
-            # 如果失败（可能由于数值误差导致仍不可控），尝试降低起始/终点速度再次求解
+            # 计算路径参数化，逐级回退
+            parameterization = instance.compute_parameterization(sd_start_used, sd_end_used)
+            
+            # 如果失败，尝试多级回退
+            retry_factors = [0.7, 0.5, 0.3, 0.1]  # 逐级降低
+            for factor in retry_factors:
+                if parameterization is not None:
+                    break
+                sd_start_used = sd_start * factor
+                sd_end_used = sd_end * factor
+                logging.warning("TOPP-RA param failed. Retrying with factor=%.1f (sd=%.4f, %.4f)...", 
+                               factor, sd_start_used, sd_end_used)
+                parameterization = instance.compute_parameterization(sd_start_used, sd_end_used)
+            
+            # 如果仍然失败，尝试零边界
             if parameterization is None:
-                logging.warning("TOPP-RA param failed. Retrying with reduced boundary velocities...")
-                parameterization = instance.compute_parameterization(sd_start * 0.5, sd_end * 0.5)
+                logging.warning("TOPP-RA all retries failed. Trying zero boundary...")
+                sd_start_used = 0.0
+                sd_end_used = 0.0
+                parameterization = instance.compute_parameterization(0.0, 0.0)
             
             if parameterization is None:
-                # 回退：尝试零终点速度
-                logging.warning("TOPP-RA retry failed. Trying zero end velocity...")
-                parameterization = instance.compute_parameterization(sd_start * 0.5, 0.0)
-            
-            if parameterization is None:
-                # 再次回退：使用默认（零起止）
-                logging.warning("TOPP-RA all params failed. Falling back to zero start/end...")
+                # 最后回退：使用默认（无参数）
+                logging.warning("TOPP-RA zero boundary failed. Using default compute_trajectory()...")
                 traj = instance.compute_trajectory()
             else:
-                # 从参数化创建轨迹
-                traj = instance.compute_trajectory(sd_start, sd_end)
+                # 从参数化创建轨迹，使用实际成功的 sd 值
+                try:
+                    traj = instance.compute_trajectory(sd_start_used, sd_end_used)
+                except Exception as e:
+                    logging.warning("TOPP-RA compute_trajectory failed with sd=(%.4f, %.4f): %s. Trying default...",
+                                   sd_start_used, sd_end_used, e)
+                    traj = instance.compute_trajectory()
                 
         except Exception as e:
-            logging.debug(f"compute_parameterization failed: {e}, falling back to default")
+            logging.warning(f"compute_parameterization failed: {e}, falling back to default")
             traj = instance.compute_trajectory()
         
         if traj is None:
