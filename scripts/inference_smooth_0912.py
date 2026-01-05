@@ -151,7 +151,7 @@ def inference_worker(
                 # Step 1: Horizon-level EMA/移动平滑
                 if getattr(args, "horizon_smooth", "none") != "none" and body.size > 0:
                     try:
-                        body = smooth_horizon(body, method=args.horizon_smooth, window=args.horizon_window, ema_alpha=args.horizon_ema_alpha)
+                        body = smooth_horizon(body, method=args.horizon_smooth, window=args.horizon_window, ema_alpha=args.horizon_ema_alpha, bspline_s=getattr(args, "bspline_s", 0.0))
                     except Exception:
                         logging.exception("worker horizon smoothing failed")
 
@@ -268,12 +268,13 @@ def ema_transition(old_actions, new_actions, alpha=0.7):
         result.append(a)
     return result
 
-def smooth_horizon(actions: np.ndarray, method: str = "none", window: int = 3, ema_alpha: float = 0.9):
+def smooth_horizon(actions: np.ndarray, method: str = "none", window: int = 3, ema_alpha: float = 0.9, bspline_s: float = 0.0):
     """
     Smooth predicted horizon (actions: shape (H, D)). Returns smoothed array same shape.
-    method: 'none'|'moving'|'median'|'ema'
+    method: 'none'|'moving'|'median'|'ema'|'bspline'
     window: integer window size for moving/median (should be odd for median/centered moving)
     ema_alpha: smoothing factor for EMA (0-1)
+    bspline_s: B-Spline smoothing factor (0=interpolate, >0=fitting/smoothing)
     """
     if method == "none" or window <= 1 and method in ("moving", "median"):
         return actions
@@ -306,6 +307,34 @@ def smooth_horizon(actions: np.ndarray, method: str = "none", window: int = 3, e
             s = alpha * actions[t] + (1.0 - alpha) * s
             sm[t] = s
         return sm
+    elif method == "bspline":
+        # B-Spline 平滑：保证 C² 连续性（加速度连续），有效减少 Jerk
+        # s=0: 严格通过所有点（插值）
+        # s>0: 允许偏离数据点（拟合/平滑），值越大越平滑
+        try:
+            from scipy.interpolate import splprep, splev
+        except ImportError:
+            logging.warning("scipy not available, falling back to EMA")
+            return smooth_horizon(actions, method="ema", ema_alpha=ema_alpha)
+        
+        if H < 4:  # B-Spline 至少需要 k+1=4 个点
+            return actions
+        
+        # 创建参数化 u ∈ [0, 1]
+        u = np.linspace(0, 1, H)
+        
+        try:
+            # 使用三次 B-Spline (k=3)，保证 C² 连续
+            # s 参数控制平滑度
+            tck, _ = splprep(actions.T, u=u, s=bspline_s, k=3)
+            
+            # 在原始参数点上评估
+            smoothed = np.array(splev(u, tck)).T
+            
+            return smoothed
+        except Exception as e:
+            logging.warning(f"B-Spline smoothing failed: {e}, returning original")
+            return actions
     else:
         raise ValueError(f"Unknown horizon smoothing method: {method!r}")
 
@@ -404,9 +433,10 @@ def main():
     parser.add_argument("--ema_alpha", type=float, default=0.5, help="EMA平滑时新动作权重alpha,0~1")
     parser.add_argument("--align_mode", type=str, default="step", choices=["step", "euclidean"], help="新动作对齐方式: step(步数) 或 euclidean(欧氏距离)")
     # Horizon-level smoothing of the predicted action sequence (uses full predicted horizon)
-    parser.add_argument("--horizon_smooth", type=str, default="ema", choices=["none", "moving", "median", "ema"], help="对预测 horizon 进行时序平滑: none/moving/median/ema")
+    parser.add_argument("--horizon_smooth", type=str, default="ema", choices=["none", "moving", "median", "ema", "bspline"], help="对预测 horizon 进行时序平滑: none/moving/median/ema/bspline")
     parser.add_argument("--horizon_window", type=int, default=30, help="窗口大小用于 moving/median 平滑（越大越平滑）。奇数优先")
     parser.add_argument("--horizon_ema_alpha", type=float, default=0.7, help="horizon EMA alpha 用于 horizon_smooth=ema")
+    parser.add_argument("--bspline_s", type=float, default=0.0, help="B-Spline 平滑因子: 0=严格插值, >0=允许偏离(越大越平滑)")
     # QP-style online optimizer options
     parser.add_argument("--qp_lambda_acc", type=float, default=0.0, help="二阶差分加速惩罚系数（>=0），qp优化时使用。0 表示禁用")
     parser.add_argument("--qp_velocity_limit", type=float, default=0.0, help="可选的每步最大速度（动作单位/step），>0 则启用简单束缚后处理")
@@ -639,7 +669,7 @@ def main():
                             grip = None
                         if body.size > 0:
                             try:
-                                body = smooth_horizon(body, method=args.horizon_smooth, window=args.horizon_window, ema_alpha=args.horizon_ema_alpha)
+                                body = smooth_horizon(body, method=args.horizon_smooth, window=args.horizon_window, ema_alpha=args.horizon_ema_alpha, bspline_s=getattr(args, "bspline_s", 0.0))
                             except Exception:
                                 logging.exception("main horizon smoothing failed")
                         new_actions = np.concatenate([body, grip], axis=1) if grip is not None else body

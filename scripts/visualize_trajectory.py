@@ -162,18 +162,77 @@ def plot_comparison(
     return fig
 
 
-def compute_smoothness_metrics(positions: np.ndarray, dt: float) -> dict:
-    """计算平滑度指标"""
+def compute_smoothness_metrics(positions: np.ndarray, dt: float, skip_start: int = 30) -> dict:
+    """
+    计算平滑度指标
+    
+    Args:
+        positions: (H, D) 位置序列
+        dt: 时间步长
+        skip_start: 跳过开头多少步（避免起步瞬态影响）
+    """
     velocity, acceleration, jerk = compute_derivatives(positions, dt)
     
+    # 排除起始段（避免静止到运动的瞬态污染统计）
+    if len(jerk) > skip_start:
+        jerk_stable = jerk[skip_start:]
+        acc_stable = acceleration[skip_start:]
+        vel_stable = velocity[skip_start:]
+    else:
+        jerk_stable = jerk
+        acc_stable = acceleration
+        vel_stable = velocity
+    
+    # 计算各维度的绝对值
+    jerk_abs = np.abs(jerk_stable) if len(jerk_stable) > 0 else np.zeros((1, positions.shape[1]))
+    acc_abs = np.abs(acc_stable) if len(acc_stable) > 0 else np.zeros((1, positions.shape[1]))
+    vel_abs = np.abs(vel_stable) if len(vel_stable) > 0 else np.zeros((1, positions.shape[1]))
+    
     metrics = {
-        "max_velocity": np.max(np.abs(velocity)) if len(velocity) > 0 else 0,
-        "max_acceleration": np.max(np.abs(acceleration)) if len(acceleration) > 0 else 0,
-        "max_jerk": np.max(np.abs(jerk)) if len(jerk) > 0 else 0,
-        "mean_abs_jerk": np.mean(np.abs(jerk)) if len(jerk) > 0 else 0,
-        "jerk_std": np.std(jerk) if len(jerk) > 0 else 0,
+        # 峰值指标（仍然有参考价值）
+        "max_velocity": np.max(vel_abs),
+        "max_acceleration": np.max(acc_abs),
+        "max_jerk": np.max(jerk_abs),
+        
+        # Mean 指标（更能反映整体平滑度）
+        "mean_velocity": np.mean(vel_abs),
+        "mean_acceleration": np.mean(acc_abs),
+        "mean_jerk": np.mean(jerk_abs),
+        
+        # 中位数（对异常值更鲁棒）
+        "median_jerk": np.median(jerk_abs),
+        
+        # 百分位数（看分布）
+        "jerk_p90": np.percentile(jerk_abs, 90),
+        "jerk_p99": np.percentile(jerk_abs, 99),
+        
+        # 标准差（看波动程度）
+        "jerk_std": np.std(jerk_abs),
+        "acc_std": np.std(acc_abs),
+        
+        # 总能量（积分指标）
+        "jerk_energy": np.sum(jerk_abs**2) * dt,
     }
     return metrics
+
+
+def compare_metrics(metrics1: dict, metrics2: dict, name1: str = "A", name2: str = "B"):
+    """对比两组指标"""
+    print(f"\n{'='*60}")
+    print(f"Comparison: {name1} vs {name2}")
+    print(f"{'='*60}")
+    print(f"{'Metric':<25} {name1:>15} {name2:>15} {'Change':>10}")
+    print("-" * 65)
+    
+    for key in metrics1:
+        v1 = metrics1[key]
+        v2 = metrics2[key]
+        if v1 != 0:
+            change = (v2 - v1) / v1 * 100
+            change_str = f"{change:+.1f}%"
+        else:
+            change_str = "N/A"
+        print(f"{key:<25} {v1:>15.2f} {v2:>15.2f} {change_str:>10}")
 
 
 def analyze_trajectory_file(filepath: str, dt: float = 0.033):
