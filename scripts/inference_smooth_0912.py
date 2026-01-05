@@ -426,6 +426,9 @@ def main():
     parser.add_argument("--profile", action="store_true", help="打印关键耗时打点（观测/推理/后处理/控制循环）")
     parser.add_argument("--loop_warn_s", type=float, default=0.2, help="控制循环耗时超过该阈值就报警(秒)")
     
+    # 轨迹记录（用于可视化分析）
+    parser.add_argument("--record_trajectory", type=str, default="", help="保存轨迹数据到指定文件 (NPZ格式)，用于后续可视化分析")
+    
     # speed or pose
     parser.add_argument("--mode", type=str, required=False, default="pose", help="inference mode")
     # jitter seed
@@ -535,6 +538,9 @@ def main():
     # robot.send_action_np(np.array([-7980, 20113, -2285, -7921, 37285,  1023,     0.]))
     # time.sleep(1)
     perf = _PerfStats()
+    
+    # 轨迹记录（用于可视化分析）
+    trajectory_record = [] if getattr(args, "record_trajectory", "") else None
 
     while i < kMaxTimeStamps:
         t0 = _now()
@@ -710,6 +716,10 @@ def main():
             perf.send_s = _now() - t_send0
             action_step_counter += 1
             
+            # 记录轨迹（用于可视化分析）
+            if trajectory_record is not None:
+                trajectory_record.append(action_to_send[:7].copy())
+            
             # 更新速度和加速度估计（用于下次 TOPP-RA/Ruckig）
             action_arr = np.asarray(action_to_send, dtype=float)
             if last_executed_action is not None:
@@ -744,6 +754,16 @@ def main():
     in_q.put(None)      # 通知子进程退出
     proc.join()
     robot.disconnect()
+    
+    # 保存轨迹记录
+    if trajectory_record is not None and len(trajectory_record) > 0:
+        try:
+            traj_array = np.array(trajectory_record)
+            save_path = args.record_trajectory
+            np.savez(save_path, executed=traj_array, fps=args.fps)
+            logging.info(f"Trajectory saved to {save_path}, shape={traj_array.shape}")
+        except Exception as e:
+            logging.exception(f"Failed to save trajectory: {e}")
 
 if __name__ == "__main__":
     main()
