@@ -542,213 +542,216 @@ def main():
     # 轨迹记录（用于可视化分析）
     trajectory_record = [] if getattr(args, "record_trajectory", "") else None
 
-    while i < kMaxTimeStamps:
-        t0 = _now()
+    try:
+        while i < kMaxTimeStamps:
+            t0 = _now()
 
-        # 1. 只有在执行了action_steps步后才采集观测并推理
-        if not waiting_for_infer and (action_step_counter >= args.action_steps or first):
-            first = False
-            t_obs0 = _now()
-            obs = robot.get_observation()
-            perf.obs_s = _now() - t_obs0
-            # Ensure obs["state"] is a numpy array
-            state7 = np.asarray(obs.get("state"))
-            if args.mode == "speed":
-                # compute delta = current_main - prev_main (or zeros for first frame)
-                if prev_main is None:
-                    delta = np.zeros_like(state7)
-                else:
-                    try:
-                        delta = state7 - prev_main
-                    except Exception:
+            # 1. 只有在执行了action_steps步后才采集观测并推理
+            if not waiting_for_infer and (action_step_counter >= args.action_steps or first):
+                first = False
+                t_obs0 = _now()
+                obs = robot.get_observation()
+                perf.obs_s = _now() - t_obs0
+                # Ensure obs["state"] is a numpy array
+                state7 = np.asarray(obs.get("state"))
+                if args.mode == "speed":
+                    # compute delta = current_main - prev_main (or zeros for first frame)
+                    if prev_main is None:
                         delta = np.zeros_like(state7)
-                obs["state"] = np.concatenate([state7, delta], axis=-1)
-                prev_main = state7.copy()
-            else:
-                obs["state"] = state7
-            obs["tokenized_prompt"] = tokenized[None]
-            obs["tokenized_prompt_mask"] = mask[None]
-            obs["token_ar_mask"] = None
-            obs["token_loss_mask"] = None
-            # send anchor (first pending action) to worker so it can align/anchor optimization
-            anchor = None
-            if len(action_queue) > 0:
+                    else:
+                        try:
+                            delta = state7 - prev_main
+                        except Exception:
+                            delta = np.zeros_like(state7)
+                    obs["state"] = np.concatenate([state7, delta], axis=-1)
+                    prev_main = state7.copy()
+                else:
+                    obs["state"] = state7
+                obs["tokenized_prompt"] = tokenized[None]
+                obs["tokenized_prompt_mask"] = mask[None]
+                obs["token_ar_mask"] = None
+                obs["token_loss_mask"] = None
+                # send anchor (first pending action) to worker so it can align/anchor optimization
+                anchor = None
+                if len(action_queue) > 0:
+                    try:
+                        anchor = np.asarray(action_queue[0], dtype=float)
+                    except Exception:
+                        anchor = None
                 try:
-                    anchor = np.asarray(action_queue[0], dtype=float)
-                except Exception:
-                    anchor = None
-            try:
-                # 使用 dict 协议传递，支持速度/加速度信息
-                msg = {
-                    "idx": sent_idx,
-                    "obs": obs,
-                    "anchor": anchor,
-                    "velocity": current_velocity,
-                    "acceleration": current_acceleration,
-                }
-                in_q.put_nowait(msg)
-                sent_idx += 1
-                waiting_for_infer = True
-                action_step_counter = 0
-            except mp.queues.Full:
-                logging.debug("inference queue full, dropping frame")
+                    # 使用 dict 协议传递，支持速度/加速度信息
+                    msg = {
+                        "idx": sent_idx,
+                        "obs": obs,
+                        "anchor": anchor,
+                        "velocity": current_velocity,
+                        "acceleration": current_acceleration,
+                    }
+                    in_q.put_nowait(msg)
+                    sent_idx += 1
+                    waiting_for_infer = True
+                    action_step_counter = 0
+                except mp.queues.Full:
+                    logging.debug("inference queue full, dropping frame")
 
-            if args.profile:
-                logging.info(
-                    "main sent idx=%s obs=%s q(action)=%s waiting=%s",
-                    sent_idx - 1,
+                if args.profile:
+                    logging.info(
+                        "main sent idx=%s obs=%s q(action)=%s waiting=%s",
+                        sent_idx - 1,
+                        _fmt_ms(perf.obs_s),
+                        len(action_queue),
+                        waiting_for_infer,
+                    )
+
+            # 2. 如果有新推理结果，立即清空并更新 action_queue
+            try:
+                idx, action_vals = out_q.get_nowait()
+                recv_idx = idx
+                logging.debug(f"got result #{recv_idx}")
+
+                # 1. 记录未执行的旧动作
+                old_actions = list(action_queue)
+                action_queue.clear()
+
+                # 2. 新推理动作起点
+                if args.align_mode == "step":
+                    start_idx = action_step_counter
+                elif args.align_mode == "euclidean" and len(old_actions) > 0 and len(action_vals) > 0:
+                    # 取旧队列第一个动作，与新动作序列做欧氏距离最小匹配
+                    old_action = old_actions[0]
+                    dists = np.linalg.norm(action_vals - old_action, axis=1)
+                    start_idx = int(np.argmin(dists))
+                else:
+                    start_idx = 0
+                new_actions = action_vals[start_idx:]
+                # 对新推理得到的 horizon 做时序平滑（因为 horizon 是完整的未来序列，可以使用中心/非因果平滑）
+                try:
+                    if args.horizon_smooth != "none" and len(new_actions) > 0:
+                        arr = np.asarray(new_actions, dtype=float)
+                        if arr.ndim == 1:
+                            arr = arr[None, :]
+                        H, D = arr.shape
+                        if D >= 2:
+                            body = arr[:, :-1]
+                            grip = arr[:, -1:]
+                        else:
+                            body = arr
+                            grip = None
+                        if body.size > 0:
+                            try:
+                                body = smooth_horizon(body, method=args.horizon_smooth, window=args.horizon_window, ema_alpha=args.horizon_ema_alpha)
+                            except Exception:
+                                logging.exception("main horizon smoothing failed")
+                        new_actions = np.concatenate([body, grip], axis=1) if grip is not None else body
+                except Exception as e:
+                    logging.exception("horizon smoothing failed, falling back to raw predictions: %s", e)
+
+                # 可选：对整个 horizon 做 QP-style 优化以最小化二阶差分（加速度）
+                try:
+                    if args.qp_lambda_acc and args.qp_lambda_acc > 0 and len(new_actions) > 0:
+                        # anchor 使用当前队列第一个动作（若有）以保证前端对齐
+                        anchor = None
+                        if len(old_actions) > 0:
+                            try:
+                                anchor = np.asarray(old_actions[0], dtype=float)
+                            except Exception:
+                                anchor = None
+                        arr = np.asarray(new_actions, dtype=float)
+                        if arr.ndim == 1:
+                            arr = arr[None, :]
+                        H, D = arr.shape
+                        if D >= 2:
+                            body = arr[:, :-1]
+                            grip = arr[:, -1:]
+                        else:
+                            body = arr
+                            grip = None
+                        if body.size > 0:
+                            try:
+                                body = optimize_horizon_qp(body, lambda_acc=args.qp_lambda_acc, velocity_limit=args.qp_velocity_limit, anchor=anchor)
+                            except Exception as e:
+                                logging.exception("main qp optimization failed: %s", e)
+                        new_actions = np.concatenate([body, grip], axis=1) if grip is not None else body
+                except Exception as e:
+                    logging.exception("qp horizon optimization failed, falling back to pre-qped predictions: %s", e)
+
+                # 3. 平滑衔接（可通过参数切换）
+                if args.smooth_type == "linear":
+                    smooth_actions = linear_transition(old_actions, new_actions)
+                elif args.smooth_type == "cubic":
+                    smooth_actions = cubic_transition(old_actions, new_actions)
+                elif args.smooth_type == "quintic":
+                    smooth_actions = quintic_transition(old_actions, new_actions)
+                elif args.smooth_type == "ema":
+                    smooth_actions = ema_transition(old_actions, new_actions, alpha=args.ema_alpha)
+                else:
+                    raise ValueError(f"Unknown smooth_type: {args.smooth_type}")
+                for a in smooth_actions:
+                    action_queue.append(a)
+
+                waiting_for_infer = False
+
+                if args.profile:
+                    try:
+                        arr = np.asarray(action_vals)
+                        shape = tuple(arr.shape)
+                    except Exception:
+                        shape = "?"
+                    logging.info(
+                        "main recv idx=%s actions_shape=%s queued=%s old_pending=%s",
+                        recv_idx,
+                        shape,
+                        len(action_queue),
+                        len(old_actions),
+                    )
+            except mp.queues.Empty:
+                pass
+
+            # 3. 如果 action_queue 有动作，发给 robot
+            if action_queue:
+                action_to_send = action_queue.popleft()
+                if print_log:
+                    logger.log(action_to_send[:7])
+                t_send0 = _now()
+                robot.send_action_np(action_to_send[:7])
+                perf.send_s = _now() - t_send0
+                action_step_counter += 1
+                
+                # 记录轨迹（用于可视化分析）
+                if trajectory_record is not None:
+                    trajectory_record.append(action_to_send[:7].copy())
+                
+                # 更新速度和加速度估计（用于下次 TOPP-RA/Ruckig）
+                action_arr = np.asarray(action_to_send, dtype=float)
+                if last_executed_action is not None:
+                    try:
+                        new_velocity = (action_arr - last_executed_action) / step_time
+                        if current_velocity is not None:
+                            current_acceleration = (new_velocity - current_velocity) / step_time
+                        current_velocity = new_velocity
+                    except Exception:
+                        current_velocity = None
+                        current_acceleration = None
+                last_executed_action = action_arr.copy()
+
+            # 2.5 统计
+            i += 1
+            dt_s = _now() - t0
+            perf.loop_s = dt_s
+            # print(f"loop {i} dt={dt_s:.3f} s")
+            if args.profile and dt_s > args.loop_warn_s:
+                logging.warning(
+                    "loop slow dt=%s (obs=%s send=%s) action_queue=%s waiting=%s step_counter=%s",
+                    _fmt_ms(dt_s),
                     _fmt_ms(perf.obs_s),
+                    _fmt_ms(perf.send_s),
                     len(action_queue),
                     waiting_for_infer,
+                    action_step_counter,
                 )
-
-        # 2. 如果有新推理结果，立即清空并更新 action_queue
-        try:
-            idx, action_vals = out_q.get_nowait()
-            recv_idx = idx
-            logging.debug(f"got result #{recv_idx}")
-
-            # 1. 记录未执行的旧动作
-            old_actions = list(action_queue)
-            action_queue.clear()
-
-            # 2. 新推理动作起点
-            if args.align_mode == "step":
-                start_idx = action_step_counter
-            elif args.align_mode == "euclidean" and len(old_actions) > 0 and len(action_vals) > 0:
-                # 取旧队列第一个动作，与新动作序列做欧氏距离最小匹配
-                old_action = old_actions[0]
-                dists = np.linalg.norm(action_vals - old_action, axis=1)
-                start_idx = int(np.argmin(dists))
-            else:
-                start_idx = 0
-            new_actions = action_vals[start_idx:]
-            # 对新推理得到的 horizon 做时序平滑（因为 horizon 是完整的未来序列，可以使用中心/非因果平滑）
-            try:
-                if args.horizon_smooth != "none" and len(new_actions) > 0:
-                    arr = np.asarray(new_actions, dtype=float)
-                    if arr.ndim == 1:
-                        arr = arr[None, :]
-                    H, D = arr.shape
-                    if D >= 2:
-                        body = arr[:, :-1]
-                        grip = arr[:, -1:]
-                    else:
-                        body = arr
-                        grip = None
-                    if body.size > 0:
-                        try:
-                            body = smooth_horizon(body, method=args.horizon_smooth, window=args.horizon_window, ema_alpha=args.horizon_ema_alpha)
-                        except Exception:
-                            logging.exception("main horizon smoothing failed")
-                    new_actions = np.concatenate([body, grip], axis=1) if grip is not None else body
-            except Exception as e:
-                logging.exception("horizon smoothing failed, falling back to raw predictions: %s", e)
-
-            # 可选：对整个 horizon 做 QP-style 优化以最小化二阶差分（加速度）
-            try:
-                if args.qp_lambda_acc and args.qp_lambda_acc > 0 and len(new_actions) > 0:
-                    # anchor 使用当前队列第一个动作（若有）以保证前端对齐
-                    anchor = None
-                    if len(old_actions) > 0:
-                        try:
-                            anchor = np.asarray(old_actions[0], dtype=float)
-                        except Exception:
-                            anchor = None
-                    arr = np.asarray(new_actions, dtype=float)
-                    if arr.ndim == 1:
-                        arr = arr[None, :]
-                    H, D = arr.shape
-                    if D >= 2:
-                        body = arr[:, :-1]
-                        grip = arr[:, -1:]
-                    else:
-                        body = arr
-                        grip = None
-                    if body.size > 0:
-                        try:
-                            body = optimize_horizon_qp(body, lambda_acc=args.qp_lambda_acc, velocity_limit=args.qp_velocity_limit, anchor=anchor)
-                        except Exception as e:
-                            logging.exception("main qp optimization failed: %s", e)
-                    new_actions = np.concatenate([body, grip], axis=1) if grip is not None else body
-            except Exception as e:
-                logging.exception("qp horizon optimization failed, falling back to pre-qped predictions: %s", e)
-
-            # 3. 平滑衔接（可通过参数切换）
-            if args.smooth_type == "linear":
-                smooth_actions = linear_transition(old_actions, new_actions)
-            elif args.smooth_type == "cubic":
-                smooth_actions = cubic_transition(old_actions, new_actions)
-            elif args.smooth_type == "quintic":
-                smooth_actions = quintic_transition(old_actions, new_actions)
-            elif args.smooth_type == "ema":
-                smooth_actions = ema_transition(old_actions, new_actions, alpha=args.ema_alpha)
-            else:
-                raise ValueError(f"Unknown smooth_type: {args.smooth_type}")
-            for a in smooth_actions:
-                action_queue.append(a)
-
-            waiting_for_infer = False
-
-            if args.profile:
-                try:
-                    arr = np.asarray(action_vals)
-                    shape = tuple(arr.shape)
-                except Exception:
-                    shape = "?"
-                logging.info(
-                    "main recv idx=%s actions_shape=%s queued=%s old_pending=%s",
-                    recv_idx,
-                    shape,
-                    len(action_queue),
-                    len(old_actions),
-                )
-        except mp.queues.Empty:
-            pass
-
-        # 3. 如果 action_queue 有动作，发给 robot
-        if action_queue:
-            action_to_send = action_queue.popleft()
-            if print_log:
-                logger.log(action_to_send[:7])
-            t_send0 = _now()
-            robot.send_action_np(action_to_send[:7])
-            perf.send_s = _now() - t_send0
-            action_step_counter += 1
-            
-            # 记录轨迹（用于可视化分析）
-            if trajectory_record is not None:
-                trajectory_record.append(action_to_send[:7].copy())
-            
-            # 更新速度和加速度估计（用于下次 TOPP-RA/Ruckig）
-            action_arr = np.asarray(action_to_send, dtype=float)
-            if last_executed_action is not None:
-                try:
-                    new_velocity = (action_arr - last_executed_action) / step_time
-                    if current_velocity is not None:
-                        current_acceleration = (new_velocity - current_velocity) / step_time
-                    current_velocity = new_velocity
-                except Exception:
-                    current_velocity = None
-                    current_acceleration = None
-            last_executed_action = action_arr.copy()
-
-        # 2.5 统计
-        i += 1
-        dt_s = _now() - t0
-        perf.loop_s = dt_s
-        # print(f"loop {i} dt={dt_s:.3f} s")
-        if args.profile and dt_s > args.loop_warn_s:
-            logging.warning(
-                "loop slow dt=%s (obs=%s send=%s) action_queue=%s waiting=%s step_counter=%s",
-                _fmt_ms(dt_s),
-                _fmt_ms(perf.obs_s),
-                _fmt_ms(perf.send_s),
-                len(action_queue),
-                waiting_for_infer,
-                action_step_counter,
-            )
-        time.sleep(max(step_time - dt_s,0))
+            time.sleep(max(step_time - dt_s,0))
+    except KeyboardInterrupt:
+        logging.info("Interrupted by user, stopping...")
 
     # ==== 3. 结束 ====
     in_q.put(None)      # 通知子进程退出
