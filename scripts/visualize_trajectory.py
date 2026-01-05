@@ -257,7 +257,7 @@ def analyze_trajectory_file(filepath: str, dt: float = 0.033):
                 print(f"Max Velocity: {metrics['max_velocity']:.2f}")
                 print(f"Max Acceleration: {metrics['max_acceleration']:.2f}")
                 print(f"Max Jerk: {metrics['max_jerk']:.2f}")
-                print(f"Mean |Jerk|: {metrics['mean_abs_jerk']:.2f}")
+                print(f"Mean |Jerk|: {metrics['mean_jerk']:.2f}")
     
     return data
 

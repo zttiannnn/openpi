@@ -56,7 +56,23 @@ def resample_trajectory(trajectory: np.ndarray, target_steps: int) -> np.ndarray
     if N < 2:
         return np.tile(trajectory, (target_steps, 1))
     
-    # 线性插值重采样
+    # 尝试使用 Cubic Spline 重采样以保证加速度连续 (C2)
+    try:
+        from scipy.interpolate import CubicSpline
+        # 创建归一化时间轴 [0, 1]
+        old_indices = np.linspace(0, 1, N)
+        new_indices = np.linspace(0, 1, target_steps)
+        
+        # 构建样条 (bc_type='natural' or 'not-a-knot')
+        cs = CubicSpline(old_indices, trajectory, axis=0)
+        resampled = cs(new_indices)
+        print("Resampled trajectory using Cubic Spline.")
+        return resampled
+    except ImportError:
+        pass
+
+    # 降级方案：线性插值重采样 (会导致加速度不连续)
+    print("Scipy not available, falling back to linear interpolation for resampling.")
     old_indices = np.linspace(0, 1, N)
     new_indices = np.linspace(0, 1, target_steps)
     
