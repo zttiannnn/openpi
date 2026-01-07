@@ -457,7 +457,7 @@ def main():
     parser.add_argument("--main_ruckig_lookahead", type=int, default=5, help="Ruckig 前瞻步数（从 action_queue 采样的间隔）")
     parser.add_argument("--main_ruckig_max_velocity", type=float, default=200000.0, help="主循环 Ruckig 最大速度 (pulse/s)")
     parser.add_argument("--main_ruckig_max_acceleration", type=float, default=500000.0, help="主循环 Ruckig 最大加速度 (pulse/s^2)")
-    parser.add_argument("--main_ruckig_max_jerk", type=float, default=1000000.0, help="主循环 Ruckig 最大 jerk (pulse/s^3)")
+    parser.add_argument("--main_ruckig_max_jerk", type=float, default=5000000.0, help="主循环 Ruckig 最大 jerk (pulse/s^3)")
 
     # Profiling / diagnostics (prints timing that explains stutter)
     parser.add_argument("--profile", action="store_true", help="打印关键耗时打点（观测/推理/后处理/控制循环）")
@@ -677,6 +677,10 @@ def main():
                 # 1. 记录未执行的旧动作
                 old_actions = list(action_queue)
                 action_queue.clear()
+                
+                # ★ 关键修复：重置 Ruckig 目标索引，避免追踪已不存在的旧目标
+                # 新推理结果到来时，必须让 Ruckig 重新从新队列采样目标
+                ruckig_target_idx = 0
 
                 # 2. 新推理动作起点
                 if args.align_mode == "step":
@@ -792,29 +796,43 @@ def main():
                     lookahead = args.main_ruckig_lookahead
                     queue_list = list(action_queue)
                     
-                    # 如果 Ruckig 已经完成当前目标或尚未初始化，设置新目标
+                    # 如果 Ruckig 尚未初始化，设置初始状态
                     need_new_target = False
                     if main_ruckig_inp.current_position is None or len(main_ruckig_inp.current_position) == 0:
-                        # 首次初始化
+                        # 首次初始化：用队列第一个点初始化当前状态
                         need_new_target = True
-                        # 用队列第一个点初始化当前状态
                         first_action = np.asarray(queue_list[0], dtype=float)[:6]
                         main_ruckig_inp.current_position = first_action.tolist()
                         main_ruckig_inp.current_velocity = [0.0] * 6
                         main_ruckig_inp.current_acceleration = [0.0] * 6
                     
-                    # 检查是否需要更新目标（当 Ruckig 已到达或接近目标）
-                    if not need_new_target and ruckig_target_idx > 0:
-                        # 检查是否已经消耗了足够多的点，需要前进目标
-                        # 简单策略：每次 Ruckig 完成一段就前进
-                        pass  # 由下面的 Result.Finished 触发
+                    # ★ 方向性检查：防止 Ruckig 追踪与当前运动方向相反的目标（导致回退）
+                    # 如果 ruckig_target_idx == 0，说明需要设置新目标
                     
                     # 采样下一个目标点（向前看 lookahead 步）
-                    # 触发条件：首次初始化，或者已完成上一个目标
+                    # 触发条件：首次初始化，或者已完成上一个目标 (ruckig_target_idx == 0)
                     if need_new_target or ruckig_target_idx == 0:
                         target_idx = min(lookahead, len(queue_list) - 1)
                         if len(queue_list) > 0:
                             target_action = np.asarray(queue_list[target_idx], dtype=float)[:6]
+                            current_pos = np.array(main_ruckig_inp.current_position)
+                            current_vel = np.array(main_ruckig_inp.current_velocity)
+                            
+                            # ★ 关键修复：检查目标方向是否与当前速度方向一致
+                            # 如果目标在"后方"（与当前速度方向相反），可能导致回退
+                            direction_to_target = target_action - current_pos
+                            vel_norm = np.linalg.norm(current_vel)
+                            
+                            # 只在有明显速度时检查方向
+                            if vel_norm > 1000:  # pulse/s 阈值
+                                # 计算速度方向与目标方向的点积
+                                cos_angle = np.dot(current_vel, direction_to_target) / (vel_norm * np.linalg.norm(direction_to_target) + 1e-8)
+                                if cos_angle < -0.5:  # 夹角 > 120°，目标在后方
+                                    # 目标在后方，使用队列第一个点作为更保守的目标
+                                    target_idx = 0
+                                    target_action = np.asarray(queue_list[0], dtype=float)[:6]
+                                    if args.profile:
+                                        logging.debug("Ruckig: target behind current direction, using closer target")
                             
                             # 估算 target_velocity：使用中心差分（更精确）
                             if target_idx > 0 and target_idx + 1 < len(queue_list):
@@ -886,7 +904,7 @@ def main():
                                     action_queue.popleft()
                             ruckig_target_idx = 0  # 触发下一次设置新目标
                             if args.profile:
-                                logging.debug("Ruckig reached target, consumed %d points, queue_len=%d", 
+                                logging.info("Ruckig reached target, consumed %d points, queue_len=%d", 
                                              points_to_pop, len(action_queue))
                     else:
                         # Ruckig 出错，回退到直接发送
