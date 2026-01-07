@@ -681,6 +681,11 @@ def main():
                 # ★ 关键修复：重置 Ruckig 目标索引，避免追踪已不存在的旧目标
                 # 新推理结果到来时，必须让 Ruckig 重新从新队列采样目标
                 ruckig_target_idx = 0
+                
+                # ★ 记录 Ruckig 当前位置，用于后续对齐新队列
+                ruckig_current_pos_at_recv = None
+                if main_ruckig_inp is not None and main_ruckig_inp.current_position is not None and len(main_ruckig_inp.current_position) > 0:
+                    ruckig_current_pos_at_recv = np.array(main_ruckig_inp.current_position)
 
                 # 2. 新推理动作起点
                 if args.align_mode == "step":
@@ -757,6 +762,33 @@ def main():
                     raise ValueError(f"Unknown smooth_type: {args.smooth_type}")
                 for a in smooth_actions:
                     action_queue.append(a)
+                
+                # ★ 关键修复：对齐新队列与 Ruckig 当前位置
+                # 问题：推理期间（~100ms）Ruckig 继续前进，新队列起点可能已落后于 Ruckig
+                # 解决：找到队列中最接近 Ruckig 当前位置的点，跳过之前的点
+                if ruckig_current_pos_at_recv is not None and len(action_queue) > 1 and main_ruckig is not None:
+                    queue_list = list(action_queue)
+                    # 计算每个点与 Ruckig 当前位置的距离（只看前 6 个关节）
+                    distances = []
+                    for q_action in queue_list:
+                        q_pos = np.asarray(q_action, dtype=float)[:6]
+                        dist = np.linalg.norm(q_pos - ruckig_current_pos_at_recv)
+                        distances.append(dist)
+                    
+                    # 找到最近的点
+                    best_idx = int(np.argmin(distances))
+                    
+                    # 如果最近点不是第一个，说明队列前面的点已经"落后"，需要跳过
+                    if best_idx > 0:
+                        # 跳过落后的点
+                        for _ in range(best_idx):
+                            if action_queue:
+                                action_queue.popleft()
+                        if args.profile:
+                            logging.info(
+                                "Queue aligned to Ruckig position: skipped %d points (dist=%.1f), queue_len=%d",
+                                best_idx, distances[best_idx], len(action_queue)
+                            )
 
                 waiting_for_infer = False
 
@@ -806,9 +838,6 @@ def main():
                         main_ruckig_inp.current_velocity = [0.0] * 6
                         main_ruckig_inp.current_acceleration = [0.0] * 6
                     
-                    # ★ 方向性检查：防止 Ruckig 追踪与当前运动方向相反的目标（导致回退）
-                    # 如果 ruckig_target_idx == 0，说明需要设置新目标
-                    
                     # 采样下一个目标点（向前看 lookahead 步）
                     # 触发条件：首次初始化，或者已完成上一个目标 (ruckig_target_idx == 0)
                     if need_new_target or ruckig_target_idx == 0:
@@ -818,21 +847,20 @@ def main():
                             current_pos = np.array(main_ruckig_inp.current_position)
                             current_vel = np.array(main_ruckig_inp.current_velocity)
                             
-                            # ★ 关键修复：检查目标方向是否与当前速度方向一致
-                            # 如果目标在"后方"（与当前速度方向相反），可能导致回退
+                            # 计算目标方向（用于日志诊断）
                             direction_to_target = target_action - current_pos
+                            dist_to_target = np.linalg.norm(direction_to_target)
                             vel_norm = np.linalg.norm(current_vel)
                             
-                            # 只在有明显速度时检查方向
-                            if vel_norm > 1000:  # pulse/s 阈值
-                                # 计算速度方向与目标方向的点积
-                                cos_angle = np.dot(current_vel, direction_to_target) / (vel_norm * np.linalg.norm(direction_to_target) + 1e-8)
-                                if cos_angle < -0.5:  # 夹角 > 120°，目标在后方
-                                    # 目标在后方，使用队列第一个点作为更保守的目标
-                                    target_idx = 0
-                                    target_action = np.asarray(queue_list[0], dtype=float)[:6]
-                                    if args.profile:
-                                        logging.debug("Ruckig: target behind current direction, using closer target")
+                            # 方向性检查（仅警告，不修改目标）
+                            # 由于已在队列填充时做了对齐，此处主要用于诊断
+                            if vel_norm > 1000 and dist_to_target > 100:
+                                cos_angle = np.dot(current_vel, direction_to_target) / (vel_norm * dist_to_target + 1e-8)
+                                if cos_angle < -0.3:  # 夹角 > 107°
+                                    logging.warning(
+                                        "Ruckig target may cause backtrack: cos=%.2f dist=%.1f vel_norm=%.1f",
+                                        cos_angle, dist_to_target, vel_norm
+                                    )
                             
                             # 估算 target_velocity：使用中心差分（更精确）
                             if target_idx > 0 and target_idx + 1 < len(queue_list):
