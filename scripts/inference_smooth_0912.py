@@ -782,9 +782,10 @@ def main():
                 # ============ 主循环 Ruckig 实时平滑 ============
                 # 思路：
                 # 1. 从 action_queue 中采样目标点（每 lookahead 步取一个）
-                # 2. 估算 target_vel/acc 以保证轨迹衔接
+                # 2. 使用中心差分估算 target_vel 以保证轨迹方向正确
                 # 3. 使用 minimum_duration 确保符合 30Hz 节奏
                 # 4. Ruckig 输出一步，发送给机器人
+                # 5. 只有当 Ruckig 完成一段时才批量清理队列（避免参照系漂移）
                 
                 try:
                     from ruckig import Result
@@ -792,56 +793,55 @@ def main():
                     lookahead = args.main_ruckig_lookahead
                     queue_list = list(action_queue)
                     
-                    # 如果 Ruckig 已经完成当前目标或尚未初始化，设置新目标
+                    # 如果 Ruckig 尚未初始化，设置初始状态
                     need_new_target = False
                     if main_ruckig_inp.current_position is None or len(main_ruckig_inp.current_position) == 0:
-                        # 首次初始化
+                        # 首次初始化：用队列第一个点初始化当前状态
                         need_new_target = True
-                        # 用队列第一个点初始化当前状态
                         first_action = np.asarray(queue_list[0], dtype=float)[:6]
                         main_ruckig_inp.current_position = first_action.tolist()
                         main_ruckig_inp.current_velocity = [0.0] * 6
                         main_ruckig_inp.current_acceleration = [0.0] * 6
                     
-                    # 检查是否需要更新目标（当 Ruckig 已到达或接近目标）
-                    if not need_new_target and ruckig_target_idx > 0:
-                        # 检查是否已经消耗了足够多的点，需要前进目标
-                        # 简单策略：每次 Ruckig 完成一段就前进
-                        pass  # 由下面的 Result.Finished 触发
-                    
                     # 采样下一个目标点（向前看 lookahead 步）
-                    # 触发条件：首次初始化，或者已完成上一个目标
+                    # 触发条件：首次初始化，或者已完成上一个目标 (ruckig_target_idx == 0)
                     if need_new_target or ruckig_target_idx == 0:
                         target_idx = min(lookahead, len(queue_list) - 1)
-                        if len(queue_list) > 0:
+                        if len(queue_list) > 0 and target_idx >= 0:
                             target_action = np.asarray(queue_list[target_idx], dtype=float)[:6]
                             
-                            # 估算 target_velocity：从 target 前后点差分
-                            if target_idx + 1 < len(queue_list):
+                            # ====== 使用中心差分估算 target_velocity ======
+                            # 中心差分 (P[i+1] - P[i-1]) / 2dt 更能代表该点的切线方向
+                            if target_idx > 0 and target_idx + 1 < len(queue_list):
+                                # 有前后两个点，使用中心差分
+                                prev_action = np.asarray(queue_list[target_idx - 1], dtype=float)[:6]
+                                next_action = np.asarray(queue_list[target_idx + 1], dtype=float)[:6]
+                                target_vel = (next_action - prev_action) / (2.0 * step_time)
+                            elif target_idx + 1 < len(queue_list):
+                                # 只有后一个点，使用前向差分
                                 next_action = np.asarray(queue_list[target_idx + 1], dtype=float)[:6]
                                 target_vel = (next_action - target_action) / step_time
                             elif target_idx > 0:
+                                # 只有前一个点，使用后向差分
                                 prev_action = np.asarray(queue_list[target_idx - 1], dtype=float)[:6]
                                 target_vel = (target_action - prev_action) / step_time
                             else:
+                                # 孤立点，速度为零（停止）
                                 target_vel = np.zeros(6)
                             
-                            # 估算 target_acceleration：从速度差分
-                            if target_idx + 2 < len(queue_list):
-                                next2_action = np.asarray(queue_list[target_idx + 2], dtype=float)[:6]
-                                next_vel = (next2_action - np.asarray(queue_list[target_idx + 1], dtype=float)[:6]) / step_time
-                                target_acc = (next_vel - target_vel) / step_time
-                            else:
-                                target_acc = np.zeros(6)
+                            # ====== 速度方向检查：防止反向导致回溯 ======
+                            # 如果当前速度与目标速度点积为负（方向相反），则减小目标速度
+                            current_vel = np.array(main_ruckig_inp.current_velocity)
+                            if np.dot(current_vel, target_vel) < 0 and np.linalg.norm(current_vel) > 1e-6:
+                                # 方向不一致，将目标速度设为零，让 Ruckig 自然减速
+                                target_vel = np.zeros(6)
                             
                             # 设置 Ruckig 目标
                             main_ruckig_inp.target_position = target_action.tolist()
                             main_ruckig_inp.target_velocity = target_vel.tolist()
-                            # 注意：target_acceleration 在 Ruckig Community 版不支持，跳过
-                            # main_ruckig_inp.target_acceleration = target_acc.tolist()
+                            # target_acceleration 在 Ruckig Community 版不支持，保持默认（零）
                             
                             # 设置 minimum_duration：确保至少花 lookahead * step_time 到达
-                            # 这样可以保证不会比 VLA 预期的 30Hz 更快
                             main_ruckig_inp.minimum_duration = lookahead * step_time
                             
                             ruckig_target_idx = target_idx
@@ -867,16 +867,21 @@ def main():
                         # 更新 Ruckig 状态
                         main_ruckig_out.pass_to_input(main_ruckig_inp)
                         
-                        # 从 action_queue 移除已"消耗"的点（按比例）
-                        # 简单策略：每次 Ruckig 输出一步，就从队列弹出一个点
-                        if action_queue:
-                            action_queue.popleft()
-                        
+                        # ====== 队列清理策略：只有当 Ruckig 完成时才批量清理 ======
                         if result == Result.Finished:
-                            # 到达目标，准备下一个目标
+                            # 到达目标，批量移除已经"走过"的点
+                            # 移除 [0, ruckig_target_idx] 范围内的所有点
+                            points_to_remove = min(ruckig_target_idx + 1, len(action_queue))
+                            for _ in range(points_to_remove):
+                                if action_queue:
+                                    action_queue.popleft()
+                            
+                            # 重置目标索引，触发下一轮目标设置
                             ruckig_target_idx = 0
                             if args.profile:
-                                logging.debug("Ruckig reached target, will set new target next step")
+                                logging.debug("Ruckig reached target, removed %d points, queue=%d", 
+                                             points_to_remove, len(action_queue))
+                        # 注意：当 result == Working 时，不弹出任何点，保持队列稳定
                     else:
                         # Ruckig 出错，回退到直接发送
                         logging.warning("Ruckig returned error: %s, falling back to direct send", result)
