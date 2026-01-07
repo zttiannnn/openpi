@@ -809,34 +809,51 @@ def main():
                         # 简单策略：每次 Ruckig 完成一段就前进
                         pass  # 由下面的 Result.Finished 触发
                     
-                    # ============ 新策略：始终追踪 queue[0]，到达后才消耗 ============
-                    # 这样避免"目标后移导致回退"的问题
-                    
+                    # 采样下一个目标点（向前看 lookahead 步）
                     # 触发条件：首次初始化，或者已完成上一个目标
                     if need_new_target or ruckig_target_idx == 0:
+                        target_idx = min(lookahead, len(queue_list) - 1)
                         if len(queue_list) > 0:
-                            # 目标：队列第一个点（下一个要执行的位置）
-                            target_action = np.asarray(queue_list[0], dtype=float)[:6]
+                            target_action = np.asarray(queue_list[target_idx], dtype=float)[:6]
                             
-                            # 估算 target_velocity：使用 lookahead 来推断速度趋势
-                            # 从 queue[0] 到 queue[lookahead] 的平均速度
-                            lookahead_idx = min(lookahead, len(queue_list) - 1)
-                            if lookahead_idx > 0:
-                                lookahead_action = np.asarray(queue_list[lookahead_idx], dtype=float)[:6]
-                                # 速度 = 位移 / 时间
-                                target_vel = (lookahead_action - target_action) / (lookahead_idx * step_time)
+                            # 估算 target_velocity：使用中心差分（更精确）
+                            if target_idx > 0 and target_idx + 1 < len(queue_list):
+                                # 中心差分：(next - prev) / (2 * dt)
+                                prev_action = np.asarray(queue_list[target_idx - 1], dtype=float)[:6]
+                                next_action = np.asarray(queue_list[target_idx + 1], dtype=float)[:6]
+                                target_vel = (next_action - prev_action) / (2 * step_time)
+                            elif target_idx + 1 < len(queue_list):
+                                # 前向差分
+                                next_action = np.asarray(queue_list[target_idx + 1], dtype=float)[:6]
+                                target_vel = (next_action - target_action) / step_time
+                            elif target_idx > 0:
+                                # 后向差分
+                                prev_action = np.asarray(queue_list[target_idx - 1], dtype=float)[:6]
+                                target_vel = (target_action - prev_action) / step_time
                             else:
                                 target_vel = np.zeros(6)
+                            
+                            # # 估算 target_acceleration：从速度差分
+                            # if target_idx + 2 < len(queue_list):
+                            #     next2_action = np.asarray(queue_list[target_idx + 2], dtype=float)[:6]
+                            #     next_vel = (next2_action - np.asarray(queue_list[target_idx + 1], dtype=float)[:6]) / step_time
+                            #     target_acc = (next_vel - target_vel) / step_time
+                            # else:
+                            #     target_acc = np.zeros(6)
                             
                             # 设置 Ruckig 目标
                             main_ruckig_inp.target_position = target_action.tolist()
                             main_ruckig_inp.target_velocity = target_vel.tolist()
-                            # 不设置 minimum_duration，让 Ruckig 自然到达
+                            # main_ruckig_inp.target_acceleration = target_acc.tolist()
                             
-                            ruckig_target_idx = 1  # 标记已设置目标
+                            # 设置 minimum_duration：确保至少花 lookahead * step_time 到达
+                            # 这样可以保证不会比 VLA 预期的 30Hz 更快
+                            main_ruckig_inp.minimum_duration = lookahead * step_time
+                            
+                            ruckig_target_idx = target_idx
                             if args.profile:
-                                logging.debug("Ruckig set target: pos=%s vel_norm=%.1f queue_len=%d", 
-                                             target_action[:3], np.linalg.norm(target_vel), len(queue_list))
+                                logging.debug("Ruckig set new target: idx=%d pos=%s vel_norm=%.1f", 
+                                             target_idx, target_action[:3], np.linalg.norm(target_vel))
                     
                     # 执行一步 Ruckig
                     result = main_ruckig.update(main_ruckig_inp, main_ruckig_out)
@@ -856,14 +873,21 @@ def main():
                         # 更新 Ruckig 状态
                         main_ruckig_out.pass_to_input(main_ruckig_inp)
                         
+                        # # 简单策略：每次 Ruckig 输出一步，就从队列弹出一个点
+                        # if action_queue:
+                        #     action_queue.popleft()
+                        
+                        # 当 Ruckig 到达目标 (Finished) 时，一次性 pop lookahead 个点
                         if result == Result.Finished:
-                            # 到达目标，消耗这个点，准备下一个目标
-                            if action_queue:
-                                action_queue.popleft()
+                            # 到达目标，一次性消耗 lookahead 个点
+                            points_to_pop = min(ruckig_target_idx, len(action_queue))
+                            for _ in range(points_to_pop):
+                                if action_queue:
+                                    action_queue.popleft()
                             ruckig_target_idx = 0  # 触发下一次设置新目标
                             if args.profile:
-                                logging.debug("Ruckig reached target, consumed 1 point, queue_len=%d", len(action_queue))
-                        # 注意：如果 result == Working，不消耗点，继续追踪当前目标
+                                logging.debug("Ruckig reached target, consumed %d points, queue_len=%d", 
+                                             points_to_pop, len(action_queue))
                     else:
                         # Ruckig 出错，回退到直接发送
                         logging.warning("Ruckig returned error: %s, falling back to direct send", result)
