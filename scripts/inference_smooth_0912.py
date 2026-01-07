@@ -445,12 +445,19 @@ def main():
     parser.add_argument("--use_toppra", action="store_true", help="启用 TOPP-RA 时间最优路径规划")
     # 注意：AgileX follower 这套动作通常是 pulse 量级（数值可到 1e4~1e5），
     # 若仍用 1.0/2.0 这种默认值，会导致 TOPP-RA 规划出的 duration 极度夸张（几十万秒），并造成卡顿。
-    parser.add_argument("--toppra_max_velocity", type=float, default=200000.0, help="TOPP-RA 关节最大速度 (pulse/s)")
-    parser.add_argument("--toppra_max_acceleration", type=float, default=2000000.0, help="TOPP-RA 关节最大加速度 (pulse/s^2)")
+    parser.add_argument("--toppra_max_velocity", type=float, default=150000.0, help="TOPP-RA 关节最大速度 (pulse/s)")
+    parser.add_argument("--toppra_max_acceleration", type=float, default=500000.0, help="TOPP-RA 关节最大加速度 (pulse/s^2)")
     parser.add_argument("--use_ruckig", action="store_true", help="启用 Ruckig jerk-limited 轨迹平滑（可选增强）")
     parser.add_argument("--ruckig_max_velocity", type=float, default=200000.0, help="Ruckig 关节最大速度 (pulse/s)")
     parser.add_argument("--ruckig_max_acceleration", type=float, default=2000000.0, help="Ruckig 关节最大加速度 (pulse/s^2)")
     parser.add_argument("--ruckig_max_jerk", type=float, default=100000.0, help="Ruckig 关节最大 jerk (pulse/s^3)")
+    
+    # ============ 主循环 Ruckig 实时平滑参数 ============
+    parser.add_argument("--use_main_ruckig", action="store_true", help="在主循环中使用 Ruckig 实时平滑（推荐，延迟最低）")
+    parser.add_argument("--main_ruckig_lookahead", type=int, default=5, help="Ruckig 前瞻步数（从 action_queue 采样的间隔）")
+    parser.add_argument("--main_ruckig_max_velocity", type=float, default=200000.0, help="主循环 Ruckig 最大速度 (pulse/s)")
+    parser.add_argument("--main_ruckig_max_acceleration", type=float, default=500000.0, help="主循环 Ruckig 最大加速度 (pulse/s^2)")
+    parser.add_argument("--main_ruckig_max_jerk", type=float, default=1000000.0, help="主循环 Ruckig 最大 jerk (pulse/s^3)")
 
     # Profiling / diagnostics (prints timing that explains stutter)
     parser.add_argument("--profile", action="store_true", help="打印关键耗时打点（观测/推理/后处理/控制循环）")
@@ -564,6 +571,34 @@ def main():
     last_executed_action = None
     current_velocity = None
     current_acceleration = None
+
+    # ============ 主循环 Ruckig 实时平滑状态 ============
+    main_ruckig = None
+    main_ruckig_inp = None
+    main_ruckig_out = None
+    ruckig_target_idx = 0  # 当前 Ruckig 正在追踪的目标在 action_queue 中的索引 (0 表示需要设置新目标)
+    
+    if getattr(args, "use_main_ruckig", False):
+        try:
+            from ruckig import InputParameter, OutputParameter, Result, Ruckig
+            DOF = 6  # 6 个关节（不含 gripper）
+            main_ruckig = Ruckig(DOF, step_time)
+            main_ruckig_inp = InputParameter(DOF)
+            main_ruckig_out = OutputParameter(DOF)
+            # 设置约束
+            main_ruckig_inp.max_velocity = [args.main_ruckig_max_velocity] * DOF
+            main_ruckig_inp.max_acceleration = [args.main_ruckig_max_acceleration] * DOF
+            main_ruckig_inp.max_jerk = [args.main_ruckig_max_jerk] * DOF
+            logging.info(
+                "Main-loop Ruckig enabled: lookahead=%d vmax=%.0f amax=%.0f jmax=%.0f",
+                args.main_ruckig_lookahead,
+                args.main_ruckig_max_velocity,
+                args.main_ruckig_max_acceleration,
+                args.main_ruckig_max_jerk,
+            )
+        except ImportError:
+            logging.warning("Ruckig not available, --use_main_ruckig will be ignored")
+            main_ruckig = None
 
     # robot.send_action_np(np.array([-7980, 20113, -2285, -7921, 37285,  1023,     0.]))
     # time.sleep(1)
@@ -737,9 +772,128 @@ def main():
             except mp.queues.Empty:
                 pass
 
-            # 3. 如果 action_queue 有动作，发给 robot
-            if action_queue:
+            # 3. 发送动作给 robot（支持两种模式）
+            # 模式 A: 主循环 Ruckig 实时平滑（推荐）
+            # 模式 B: 直接发送 action_queue 中的动作（传统）
+            
+            action_to_send = None
+            
+            if main_ruckig is not None and action_queue:
+                # ============ 主循环 Ruckig 实时平滑 ============
+                # 思路：
+                # 1. 从 action_queue 中采样目标点（每 lookahead 步取一个）
+                # 2. 估算 target_vel/acc 以保证轨迹衔接
+                # 3. 使用 minimum_duration 确保符合 30Hz 节奏
+                # 4. Ruckig 输出一步，发送给机器人
+                
+                try:
+                    from ruckig import Result
+                    
+                    lookahead = args.main_ruckig_lookahead
+                    queue_list = list(action_queue)
+                    
+                    # 如果 Ruckig 已经完成当前目标或尚未初始化，设置新目标
+                    need_new_target = False
+                    if main_ruckig_inp.current_position is None or len(main_ruckig_inp.current_position) == 0:
+                        # 首次初始化
+                        need_new_target = True
+                        # 用队列第一个点初始化当前状态
+                        first_action = np.asarray(queue_list[0], dtype=float)[:6]
+                        main_ruckig_inp.current_position = first_action.tolist()
+                        main_ruckig_inp.current_velocity = [0.0] * 6
+                        main_ruckig_inp.current_acceleration = [0.0] * 6
+                    
+                    # 检查是否需要更新目标（当 Ruckig 已到达或接近目标）
+                    if not need_new_target and ruckig_target_idx > 0:
+                        # 检查是否已经消耗了足够多的点，需要前进目标
+                        # 简单策略：每次 Ruckig 完成一段就前进
+                        pass  # 由下面的 Result.Finished 触发
+                    
+                    # 采样下一个目标点（向前看 lookahead 步）
+                    # 触发条件：首次初始化，或者已完成上一个目标
+                    if need_new_target or ruckig_target_idx == 0:
+                        target_idx = min(lookahead, len(queue_list) - 1)
+                        if len(queue_list) > 0:
+                            target_action = np.asarray(queue_list[target_idx], dtype=float)[:6]
+                            
+                            # 估算 target_velocity：从 target 前后点差分
+                            if target_idx + 1 < len(queue_list):
+                                next_action = np.asarray(queue_list[target_idx + 1], dtype=float)[:6]
+                                target_vel = (next_action - target_action) / step_time
+                            elif target_idx > 0:
+                                prev_action = np.asarray(queue_list[target_idx - 1], dtype=float)[:6]
+                                target_vel = (target_action - prev_action) / step_time
+                            else:
+                                target_vel = np.zeros(6)
+                            
+                            # 估算 target_acceleration：从速度差分
+                            if target_idx + 2 < len(queue_list):
+                                next2_action = np.asarray(queue_list[target_idx + 2], dtype=float)[:6]
+                                next_vel = (next2_action - np.asarray(queue_list[target_idx + 1], dtype=float)[:6]) / step_time
+                                target_acc = (next_vel - target_vel) / step_time
+                            else:
+                                target_acc = np.zeros(6)
+                            
+                            # 设置 Ruckig 目标
+                            main_ruckig_inp.target_position = target_action.tolist()
+                            main_ruckig_inp.target_velocity = target_vel.tolist()
+                            # 注意：target_acceleration 在 Ruckig Community 版不支持，跳过
+                            # main_ruckig_inp.target_acceleration = target_acc.tolist()
+                            
+                            # 设置 minimum_duration：确保至少花 lookahead * step_time 到达
+                            # 这样可以保证不会比 VLA 预期的 30Hz 更快
+                            main_ruckig_inp.minimum_duration = lookahead * step_time
+                            
+                            ruckig_target_idx = target_idx
+                            if args.profile:
+                                logging.debug("Ruckig set new target: idx=%d pos=%s vel_norm=%.1f", 
+                                             target_idx, target_action[:3], np.linalg.norm(target_vel))
+                    
+                    # 执行一步 Ruckig
+                    result = main_ruckig.update(main_ruckig_inp, main_ruckig_out)
+                    
+                    if result == Result.Working or result == Result.Finished:
+                        # 获取平滑后的位置
+                        smoothed_pos = np.array(main_ruckig_out.new_position)
+                        
+                        # 获取 gripper 值（直接从 action_queue 第一个点取）
+                        if len(queue_list) > 0:
+                            gripper_val = float(np.asarray(queue_list[0], dtype=float)[6]) if len(queue_list[0]) > 6 else 0.0
+                        else:
+                            gripper_val = 0.0
+                        
+                        action_to_send = np.concatenate([smoothed_pos, [gripper_val]])
+                        
+                        # 更新 Ruckig 状态
+                        main_ruckig_out.pass_to_input(main_ruckig_inp)
+                        
+                        # 从 action_queue 移除已"消耗"的点（按比例）
+                        # 简单策略：每次 Ruckig 输出一步，就从队列弹出一个点
+                        if action_queue:
+                            action_queue.popleft()
+                        
+                        if result == Result.Finished:
+                            # 到达目标，准备下一个目标
+                            ruckig_target_idx = 0
+                            if args.profile:
+                                logging.debug("Ruckig reached target, will set new target next step")
+                    else:
+                        # Ruckig 出错，回退到直接发送
+                        logging.warning("Ruckig returned error: %s, falling back to direct send", result)
+                        if action_queue:
+                            action_to_send = action_queue.popleft()
+                
+                except Exception as e:
+                    logging.exception("Main-loop Ruckig failed: %s, falling back to direct send", e)
+                    if action_queue:
+                        action_to_send = action_queue.popleft()
+            
+            elif action_queue:
+                # ============ 传统模式：直接发送 ============
                 action_to_send = action_queue.popleft()
+            
+            # 发送动作
+            if action_to_send is not None:
                 if print_log:
                     logger.log(action_to_send[:7])
                 t_send0 = _now()
