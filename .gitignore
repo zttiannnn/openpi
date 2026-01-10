@@ -172,3 +172,6 @@ logs/
 .idea/
 
 *.npz
+
+log*.txt
+inference_smooth_0109.py

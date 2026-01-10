@@ -20,6 +20,13 @@ from third_party.agilex.agilexconfig import AlohaAgileXFollowerConfig
 from third_party.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from third_party.cameras.orbbec.configuration_orbbec import OrbbecCameraConfig
 
+try:
+    from ruckig import Ruckig, InputParameter, OutputParameter, Result
+    RUCKIG_AVAILABLE = True
+except ImportError:
+    RUCKIG_AVAILABLE = False
+    logging.warning("Ruckig not installed. Ruckig smoothing will be disabled.")
+
 def make_camera_config(cfg: dict):
     t = cfg.get('type')
     if t == 'opencv':
@@ -304,6 +311,12 @@ def main():
     parser.add_argument("--mode", type=str, required=False, default="pose", help="inference mode")
     # jitter seed
     parser.add_argument("--seed", type=int, required=False, default=10002)
+    # Ruckig smoothing options
+    parser.add_argument("--ruckig_enable", action="store_true", help="启用 Ruckig 实时平滑")
+    parser.add_argument("--ruckig_lookahead", type=int, default=4, help="Ruckig 目标 waypoint 间隔步数")
+    parser.add_argument("--ruckig_max_vel", type=float, default=1.0, help="Ruckig 最大关节速度 (rad/s)")
+    parser.add_argument("--ruckig_max_acc", type=float, default=5.0, help="Ruckig 最大关节加速度 (rad/s²)")
+    parser.add_argument("--ruckig_max_jerk", type=float, default=20.0, help="Ruckig 最大 Jerk (rad/s³)")
     args = parser.parse_args()
 
     set_seeds(args.seed)
@@ -363,6 +376,27 @@ def main():
     waiting_for_infer = False
     action_step_counter = 0  # 记录已执行的动作步数
     first = True
+
+    # ==== Ruckig 平滑初始化 ====
+    ruckig_enabled = args.ruckig_enable and RUCKIG_AVAILABLE
+    ruckig_instance = None
+    ruckig_inp = None
+    ruckig_out = None
+    ruckig_initialized = False
+    ruckig_target_set = False
+    last_sent_action = None  # 用于降级时保持静止
+    DOF = 6  # 关节数，不含 gripper
+
+    if ruckig_enabled:
+        ruckig_instance = Ruckig(DOF, step_time)
+        ruckig_inp = InputParameter(DOF)
+        ruckig_out = OutputParameter(DOF)
+        # 设置约束
+        ruckig_inp.max_velocity = [args.ruckig_max_vel] * DOF
+        ruckig_inp.max_acceleration = [args.ruckig_max_acc] * DOF
+        ruckig_inp.max_jerk = [args.ruckig_max_jerk] * DOF
+        logging.info(f"Ruckig smoothing enabled: lookahead={args.ruckig_lookahead}, "
+                     f"max_vel={args.ruckig_max_vel}, max_acc={args.ruckig_max_acc}, max_jerk={args.ruckig_max_jerk}")
 
     # robot.send_action_np(np.array([-7980, 20113, -2285, -7921, 37285,  1023,     0.]))
     # time.sleep(1)
@@ -499,12 +533,91 @@ def main():
 
         # 3. 如果 action_queue 有动作，发给 robot
         if action_queue:
-            action_to_send = action_queue.popleft()
-            if print_log:
-                logger.log(action_to_send[:7])
-            robot.send_action_np(action_to_send[:7])
-            action_step_counter += 1
-            # print(f'publish an action:{time.perf_counter()},action counter:{action_step_counter}')
+            if ruckig_enabled:
+                # ==== Ruckig Streaming 平滑 ====
+                lookahead = args.ruckig_lookahead
+
+                # 首次初始化：从机械臂读取当前状态
+                if not ruckig_initialized:
+                    try:
+                        state = robot.get_joint_state()["state"]
+                        ruckig_inp.current_position = list(state[:DOF])
+                        ruckig_inp.current_velocity = [0.0] * DOF
+                        ruckig_inp.current_acceleration = [0.0] * DOF
+                        ruckig_initialized = True
+                        logging.info("Ruckig initialized with robot state")
+                    except Exception as e:
+                        logging.warning(f"Failed to init Ruckig from robot state: {e}, using first action")
+                        first_action = action_queue[0]
+                        ruckig_inp.current_position = list(np.asarray(first_action[:DOF], dtype=float))
+                        ruckig_inp.current_velocity = [0.0] * DOF
+                        ruckig_inp.current_acceleration = [0.0] * DOF
+                        ruckig_initialized = True
+
+                # 设置目标（如果还没设置或已到达上一个目标）
+                if not ruckig_target_set and len(action_queue) >= lookahead:
+                    target_idx = lookahead - 1
+                    target_action = action_queue[target_idx]
+                    ruckig_inp.target_position = list(np.asarray(target_action[:DOF], dtype=float))
+                    # 估算目标速度（前向差分）
+                    if len(action_queue) > lookahead:
+                        next_action = action_queue[lookahead]
+                        target_vel = (np.asarray(next_action[:DOF], dtype=float) - np.asarray(target_action[:DOF], dtype=float)) / step_time
+                        ruckig_inp.target_velocity = list(target_vel)
+                    else:
+                        ruckig_inp.target_velocity = [0.0] * DOF  # 队列末尾，速度归零
+                    ruckig_inp.target_acceleration = [0.0] * DOF
+                    ruckig_target_set = True
+
+                # Ruckig 更新
+                if ruckig_target_set:
+                    try:
+                        result = ruckig_instance.update(ruckig_inp, ruckig_out)
+                        # 发送平滑后的位置
+                        smoothed_pos = np.array(ruckig_out.new_position)
+                        gripper_val = action_queue[0][DOF]  # gripper 直接透传
+                        action_to_send = np.concatenate([smoothed_pos, [gripper_val]])
+                        if print_log:
+                            logger.log(action_to_send[:7])
+                        robot.send_action_np(action_to_send[:7])
+                        last_sent_action = action_to_send
+                        action_step_counter += 1
+
+                        # 更新 Ruckig 状态（为下一次 update 准备）
+                        ruckig_out.pass_to_input(ruckig_inp)
+
+                        # 检查是否到达目标
+                        if result == Result.Finished:
+                            # 到达目标，消耗 action_queue 前 lookahead 个动作
+                            for _ in range(min(lookahead, len(action_queue))):
+                                action_queue.popleft()
+                            ruckig_target_set = False  # 触发设置新目标
+                    except Exception as e:
+                        logging.exception(f"Ruckig update failed: {e}, falling back to raw action")
+                        # 降级：直接发送原始动作
+                        action_to_send = action_queue.popleft()
+                        if print_log:
+                            logger.log(action_to_send[:7])
+                        robot.send_action_np(action_to_send[:7])
+                        last_sent_action = action_to_send
+                        action_step_counter += 1
+                else:
+                    # 队列长度不足，降级直接发送
+                    action_to_send = action_queue.popleft()
+                    if print_log:
+                        logger.log(action_to_send[:7])
+                    robot.send_action_np(action_to_send[:7])
+                    last_sent_action = action_to_send
+                    action_step_counter += 1
+            else:
+                # ==== 原始逻辑（无 Ruckig）====
+                action_to_send = action_queue.popleft()
+                if print_log:
+                    logger.log(action_to_send[:7])
+                robot.send_action_np(action_to_send[:7])
+                last_sent_action = action_to_send
+                action_step_counter += 1
+                # print(f'publish an action:{time.perf_counter()},action counter:{action_step_counter}')
 
         # 2.5 统计
         i += 1
