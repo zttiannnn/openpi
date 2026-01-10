@@ -314,9 +314,9 @@ def main():
     # Ruckig smoothing options
     parser.add_argument("--ruckig_enable", action="store_true", help="启用 Ruckig 实时平滑")
     parser.add_argument("--ruckig_lookahead", type=int, default=4, help="Ruckig 目标 waypoint 间隔步数")
-    parser.add_argument("--ruckig_max_vel", type=float, default=1.0, help="Ruckig 最大关节速度 (rad/s)")
-    parser.add_argument("--ruckig_max_acc", type=float, default=5.0, help="Ruckig 最大关节加速度 (rad/s²)")
-    parser.add_argument("--ruckig_max_jerk", type=float, default=20.0, help="Ruckig 最大 Jerk (rad/s³)")
+    parser.add_argument("--ruckig_max_vel", type=float, default=200000.0, help="Ruckig 最大关节速度 (Piper单位/s)，建议根据实际动作范围调整")
+    parser.add_argument("--ruckig_max_acc", type=float, default=500000.0, help="Ruckig 最大关节加速度 (Piper单位/s²)")
+    parser.add_argument("--ruckig_max_jerk", type=float, default=5000000.0, help="Ruckig 最大 Jerk (Piper单位/s³)")
     args = parser.parse_args()
 
     set_seeds(args.seed)
@@ -361,240 +361,254 @@ def main():
     proc.start()
 
     robot.connect()
-    prev_main = None
-    i, sent_idx, recv_idx = 0, 0, 0
-    kMaxTimeStamps = 600000
+    try:
+        prev_main = None
+        i, sent_idx, recv_idx = 0, 0, 0
+        kMaxTimeStamps = 600000
 
-    # rows = []
-    step = 1
-    step_time = step/(args.fps)
-    prompt = args.task
-    tokenizer = PaligemmaTokenizer()
-    tokenized, mask = tokenizer.tokenize(prompt)
+        # rows = []
+        step = 1
+        step_time = step/(args.fps)
+        prompt = args.task
+        tokenizer = PaligemmaTokenizer()
+        tokenized, mask = tokenizer.tokenize(prompt)
 
-    action_queue = collections.deque()  # 存储当前动作序列
-    waiting_for_infer = False
-    action_step_counter = 0  # 记录已执行的动作步数
-    first = True
+        action_queue = collections.deque()  # 存储当前动作序列
+        waiting_for_infer = False
+        action_step_counter = 0  # 记录已执行的动作步数
+        first = True
 
-    # ==== Ruckig 平滑初始化 ====
-    ruckig_enabled = args.ruckig_enable and RUCKIG_AVAILABLE
-    ruckig_instance = None
-    ruckig_inp = None
-    ruckig_out = None
-    ruckig_initialized = False
-    ruckig_target_set = False
-    last_sent_action = None  # 用于降级时保持静止
-    DOF = 6  # 关节数，不含 gripper
+        # ==== Ruckig 平滑初始化 ====
+        ruckig_enabled = args.ruckig_enable and RUCKIG_AVAILABLE
+        ruckig_instance = None
+        ruckig_inp = None
+        ruckig_out = None
+        ruckig_initialized = False
+        ruckig_target_set = False
+        last_sent_action = None  # 用于降级时保持静止
+        DOF = 6  # 关节数，不含 gripper
 
-    if ruckig_enabled:
-        ruckig_instance = Ruckig(DOF, step_time)
-        ruckig_inp = InputParameter(DOF)
-        ruckig_out = OutputParameter(DOF)
-        # 设置约束
-        ruckig_inp.max_velocity = [args.ruckig_max_vel] * DOF
-        ruckig_inp.max_acceleration = [args.ruckig_max_acc] * DOF
-        ruckig_inp.max_jerk = [args.ruckig_max_jerk] * DOF
-        logging.info(f"Ruckig smoothing enabled: lookahead={args.ruckig_lookahead}, "
-                     f"max_vel={args.ruckig_max_vel}, max_acc={args.ruckig_max_acc}, max_jerk={args.ruckig_max_jerk}")
+        if ruckig_enabled:
+            ruckig_instance = Ruckig(DOF, step_time)
+            ruckig_inp = InputParameter(DOF)
+            ruckig_out = OutputParameter(DOF)
+            # 设置约束
+            ruckig_inp.max_velocity = [args.ruckig_max_vel] * DOF
+            ruckig_inp.max_acceleration = [args.ruckig_max_acc] * DOF
+            ruckig_inp.max_jerk = [args.ruckig_max_jerk] * DOF
+            logging.info(f"Ruckig smoothing enabled: lookahead={args.ruckig_lookahead}, "
+                         f"max_vel={args.ruckig_max_vel}, max_acc={args.ruckig_max_acc}, max_jerk={args.ruckig_max_jerk}")
 
-    # robot.send_action_np(np.array([-7980, 20113, -2285, -7921, 37285,  1023,     0.]))
-    # time.sleep(1)
-    while i < kMaxTimeStamps:
-        t0 = time.perf_counter()
+        # robot.send_action_np(np.array([-7980, 20113, -2285, -7921, 37285,  1023,     0.]))
+        # time.sleep(1)
+        while i < kMaxTimeStamps:
+            t0 = time.perf_counter()
 
-        # 1. 只有在执行了action_steps步后才采集观测并推理
-        if not waiting_for_infer and (action_step_counter >= args.action_steps or first):
-            first = False
-            obs = robot.get_observation()
-            # Ensure obs["state"] is a numpy array
-            state7 = np.asarray(obs.get("state"))
-            if args.mode == "speed":
-                # compute delta = current_main - prev_main (or zeros for first frame)
-                if prev_main is None:
-                    delta = np.zeros_like(state7)
-                else:
-                    try:
-                        delta = state7 - prev_main
-                    except Exception:
+            # 1. 只有在执行了action_steps步后才采集观测并推理
+            if not waiting_for_infer and (action_step_counter >= args.action_steps or first):
+                first = False
+                obs = robot.get_observation()
+                # Ensure obs["state"] is a numpy array
+                state7 = np.asarray(obs.get("state"))
+                if args.mode == "speed":
+                    # compute delta = current_main - prev_main (or zeros for first frame)
+                    if prev_main is None:
                         delta = np.zeros_like(state7)
-                obs["state"] = np.concatenate([state7, delta], axis=-1)
-                prev_main = state7.copy()
-            else:
-                obs["state"] = state7
-            obs["tokenized_prompt"] = tokenized[None]
-            obs["tokenized_prompt_mask"] = mask[None]
-            obs["token_ar_mask"] = None
-            obs["token_loss_mask"] = None
-            # send anchor (first pending action) to worker so it can align/anchor optimization
-            anchor = None
-            if len(action_queue) > 0:
+                    else:
+                        try:
+                            delta = state7 - prev_main
+                        except Exception:
+                            delta = np.zeros_like(state7)
+                    obs["state"] = np.concatenate([state7, delta], axis=-1)
+                    prev_main = state7.copy()
+                else:
+                    obs["state"] = state7
+                obs["tokenized_prompt"] = tokenized[None]
+                obs["tokenized_prompt_mask"] = mask[None]
+                obs["token_ar_mask"] = None
+                obs["token_loss_mask"] = None
+                # send anchor (first pending action) to worker so it can align/anchor optimization
+                anchor = None
+                if len(action_queue) > 0:
+                    try:
+                        anchor = np.asarray(action_queue[0], dtype=float)
+                    except Exception:
+                        anchor = None
                 try:
-                    anchor = np.asarray(action_queue[0], dtype=float)
-                except Exception:
-                    anchor = None
+                    in_q.put_nowait((sent_idx, obs, anchor))
+                    sent_idx += 1
+                    waiting_for_infer = True
+                    action_step_counter = 0
+                except mp.queues.Full:
+                    logging.debug("inference queue full, dropping frame")
+
+            # 2. 如果有新推理结果，立即清空并更新 action_queue
             try:
-                in_q.put_nowait((sent_idx, obs, anchor))
-                sent_idx += 1
-                waiting_for_infer = True
-                action_step_counter = 0
-            except mp.queues.Full:
-                logging.debug("inference queue full, dropping frame")
+                idx, action_vals = out_q.get_nowait()
+                recv_idx = idx
+                logging.debug(f"got result #{recv_idx}")
 
-        # 2. 如果有新推理结果，立即清空并更新 action_queue
-        try:
-            idx, action_vals = out_q.get_nowait()
-            recv_idx = idx
-            logging.debug(f"got result #{recv_idx}")
+                # 1. 记录未执行的旧动作
+                old_actions = list(action_queue)
+                action_queue.clear()
 
-            # 1. 记录未执行的旧动作
-            old_actions = list(action_queue)
-            action_queue.clear()
+                # 2. 新推理动作起点
+                if args.align_mode == "step":
+                    start_idx = action_step_counter
+                elif args.align_mode == "euclidean" and len(old_actions) > 0 and len(action_vals) > 0:
+                    # 取旧队列第一个动作，与新动作序列做欧氏距离最小匹配
+                    old_action = old_actions[0]
+                    dists = np.linalg.norm(action_vals - old_action, axis=1)
+                    start_idx = int(np.argmin(dists))
+                else:
+                    start_idx = 0
+                new_actions = action_vals[start_idx:]
+                # 对新推理得到的 horizon 做时序平滑（因为 horizon 是完整的未来序列，可以使用中心/非因果平滑）
+                try:
+                    if args.horizon_smooth != "none" and len(new_actions) > 0:
+                        arr = np.asarray(new_actions, dtype=float)
+                        if arr.ndim == 1:
+                            arr = arr[None, :]
+                        H, D = arr.shape
+                        if D >= 2:
+                            body = arr[:, :-1]
+                            grip = arr[:, -1:]
+                        else:
+                            body = arr
+                            grip = None
+                        if body.size > 0:
+                            try:
+                                body = smooth_horizon(body, method=args.horizon_smooth, window=args.horizon_window, ema_alpha=args.horizon_ema_alpha)
+                            except Exception:
+                                logging.exception("main horizon smoothing failed")
+                        new_actions = np.concatenate([body, grip], axis=1) if grip is not None else body
+                except Exception as e:
+                    logging.exception("horizon smoothing failed, falling back to raw predictions: %s", e)
 
-            # 2. 新推理动作起点
-            if args.align_mode == "step":
-                start_idx = action_step_counter
-            elif args.align_mode == "euclidean" and len(old_actions) > 0 and len(action_vals) > 0:
-                # 取旧队列第一个动作，与新动作序列做欧氏距离最小匹配
-                old_action = old_actions[0]
-                dists = np.linalg.norm(action_vals - old_action, axis=1)
-                start_idx = int(np.argmin(dists))
-            else:
-                start_idx = 0
-            new_actions = action_vals[start_idx:]
-            # 对新推理得到的 horizon 做时序平滑（因为 horizon 是完整的未来序列，可以使用中心/非因果平滑）
-            try:
-                if args.horizon_smooth != "none" and len(new_actions) > 0:
-                    arr = np.asarray(new_actions, dtype=float)
-                    if arr.ndim == 1:
-                        arr = arr[None, :]
-                    H, D = arr.shape
-                    if D >= 2:
-                        body = arr[:, :-1]
-                        grip = arr[:, -1:]
-                    else:
-                        body = arr
-                        grip = None
-                    if body.size > 0:
+                # 可选：对整个 horizon 做 QP-style 优化以最小化二阶差分（加速度）
+                try:
+                    if args.qp_lambda_acc and args.qp_lambda_acc > 0 and len(new_actions) > 0:
+                        # anchor 使用当前队列第一个动作（若有）以保证前端对齐
+                        anchor = None
+                        if len(old_actions) > 0:
+                            try:
+                                anchor = np.asarray(old_actions[0], dtype=float)
+                            except Exception:
+                                anchor = None
+                        arr = np.asarray(new_actions, dtype=float)
+                        if arr.ndim == 1:
+                            arr = arr[None, :]
+                        H, D = arr.shape
+                        if D >= 2:
+                            body = arr[:, :-1]
+                            grip = arr[:, -1:]
+                        else:
+                            body = arr
+                            grip = None
+                        if body.size > 0:
+                            try:
+                                body = optimize_horizon_qp(body, lambda_acc=args.qp_lambda_acc, velocity_limit=args.qp_velocity_limit, anchor=anchor)
+                            except Exception as e:
+                                logging.exception("main qp optimization failed: %s", e)
+                        new_actions = np.concatenate([body, grip], axis=1) if grip is not None else body
+                except Exception as e:
+                    logging.exception("qp horizon optimization failed, falling back to pre-qped predictions: %s", e)
+
+                # 3. 平滑衔接（可通过参数切换）
+                if args.smooth_type == "linear":
+                    smooth_actions = linear_transition(old_actions, new_actions)
+                elif args.smooth_type == "cubic":
+                    smooth_actions = cubic_transition(old_actions, new_actions)
+                elif args.smooth_type == "quintic":
+                    smooth_actions = quintic_transition(old_actions, new_actions)
+                elif args.smooth_type == "ema":
+                    smooth_actions = ema_transition(old_actions, new_actions, alpha=args.ema_alpha)
+                else:
+                    raise ValueError(f"Unknown smooth_type: {args.smooth_type}")
+                for a in smooth_actions:
+                    action_queue.append(a)
+
+                waiting_for_infer = False
+            except mp.queues.Empty:
+                pass
+
+            # 3. 如果 action_queue 有动作，发给 robot
+            if action_queue:
+                if ruckig_enabled:
+                    # ==== Ruckig Streaming 平滑 ====
+                    lookahead = args.ruckig_lookahead
+
+                    # 首次初始化：从机械臂读取当前状态
+                    if not ruckig_initialized:
                         try:
-                            body = smooth_horizon(body, method=args.horizon_smooth, window=args.horizon_window, ema_alpha=args.horizon_ema_alpha)
-                        except Exception:
-                            logging.exception("main horizon smoothing failed")
-                    new_actions = np.concatenate([body, grip], axis=1) if grip is not None else body
-            except Exception as e:
-                logging.exception("horizon smoothing failed, falling back to raw predictions: %s", e)
-
-            # 可选：对整个 horizon 做 QP-style 优化以最小化二阶差分（加速度）
-            try:
-                if args.qp_lambda_acc and args.qp_lambda_acc > 0 and len(new_actions) > 0:
-                    # anchor 使用当前队列第一个动作（若有）以保证前端对齐
-                    anchor = None
-                    if len(old_actions) > 0:
-                        try:
-                            anchor = np.asarray(old_actions[0], dtype=float)
-                        except Exception:
-                            anchor = None
-                    arr = np.asarray(new_actions, dtype=float)
-                    if arr.ndim == 1:
-                        arr = arr[None, :]
-                    H, D = arr.shape
-                    if D >= 2:
-                        body = arr[:, :-1]
-                        grip = arr[:, -1:]
-                    else:
-                        body = arr
-                        grip = None
-                    if body.size > 0:
-                        try:
-                            body = optimize_horizon_qp(body, lambda_acc=args.qp_lambda_acc, velocity_limit=args.qp_velocity_limit, anchor=anchor)
+                            state = robot.get_joint_state()["state"]
+                            ruckig_inp.current_position = list(state[:DOF])
+                            ruckig_inp.current_velocity = [0.0] * DOF
+                            ruckig_inp.current_acceleration = [0.0] * DOF
+                            ruckig_initialized = True
+                            logging.info("Ruckig initialized with robot state")
                         except Exception as e:
-                            logging.exception("main qp optimization failed: %s", e)
-                    new_actions = np.concatenate([body, grip], axis=1) if grip is not None else body
-            except Exception as e:
-                logging.exception("qp horizon optimization failed, falling back to pre-qped predictions: %s", e)
+                            logging.warning(f"Failed to init Ruckig from robot state: {e}, using first action")
+                            first_action = action_queue[0]
+                            ruckig_inp.current_position = list(np.asarray(first_action[:DOF], dtype=float))
+                            ruckig_inp.current_velocity = [0.0] * DOF
+                            ruckig_inp.current_acceleration = [0.0] * DOF
+                            ruckig_initialized = True
 
-            # 3. 平滑衔接（可通过参数切换）
-            if args.smooth_type == "linear":
-                smooth_actions = linear_transition(old_actions, new_actions)
-            elif args.smooth_type == "cubic":
-                smooth_actions = cubic_transition(old_actions, new_actions)
-            elif args.smooth_type == "quintic":
-                smooth_actions = quintic_transition(old_actions, new_actions)
-            elif args.smooth_type == "ema":
-                smooth_actions = ema_transition(old_actions, new_actions, alpha=args.ema_alpha)
-            else:
-                raise ValueError(f"Unknown smooth_type: {args.smooth_type}")
-            for a in smooth_actions:
-                action_queue.append(a)
+                    # 设置目标（如果还没设置或已到达上一个目标）
+                    if not ruckig_target_set and len(action_queue) >= lookahead:
+                        target_idx = lookahead - 1
+                        target_action = action_queue[target_idx]
+                        target_pos = np.asarray(target_action[:DOF], dtype=float)
+                        ruckig_inp.target_position = list(target_pos)
+                        # 使用中心差分计算 target_velocity: (next - prev) / (2 * dt)
+                        if target_idx > 0 and len(action_queue) > target_idx + 1:
+                            prev_action = action_queue[target_idx - 1]
+                            next_action = action_queue[target_idx + 1]
+                            prev_pos = np.asarray(prev_action[:DOF], dtype=float)
+                            next_pos = np.asarray(next_action[:DOF], dtype=float)
+                            target_vel = (next_pos - prev_pos) / (2 * step_time)
+                            ruckig_inp.target_velocity = list(target_vel)
+                        else:
+                            ruckig_inp.target_velocity = [0.0] * DOF  # 边界情况，速度归零
+                        # target_acceleration 不设置，使用 Ruckig 默认值
+                        ruckig_inp.minimum_duration = step_time * lookahead
+                        ruckig_target_set = True
 
-            waiting_for_infer = False
-        except mp.queues.Empty:
-            pass
+                    # Ruckig 更新
+                    if ruckig_target_set:
+                        try:
+                            result = ruckig_instance.update(ruckig_inp, ruckig_out)
+                            # 发送平滑后的位置
+                            smoothed_pos = np.array(ruckig_out.new_position)
+                            gripper_val = action_queue[0][DOF]  # gripper 直接透传
+                            action_to_send = np.concatenate([smoothed_pos, [gripper_val]])
+                            if print_log:
+                                logger.log(action_to_send[:7])
+                            robot.send_action_np(action_to_send[:7])
+                            last_sent_action = action_to_send
+                            action_step_counter += 1
 
-        # 3. 如果 action_queue 有动作，发给 robot
-        if action_queue:
-            if ruckig_enabled:
-                # ==== Ruckig Streaming 平滑 ====
-                lookahead = args.ruckig_lookahead
+                            # 更新 Ruckig 状态（为下一次 update 准备）
+                            ruckig_out.pass_to_input(ruckig_inp)
 
-                # 首次初始化：从机械臂读取当前状态
-                if not ruckig_initialized:
-                    try:
-                        state = robot.get_joint_state()["state"]
-                        ruckig_inp.current_position = list(state[:DOF])
-                        ruckig_inp.current_velocity = [0.0] * DOF
-                        ruckig_inp.current_acceleration = [0.0] * DOF
-                        ruckig_initialized = True
-                        logging.info("Ruckig initialized with robot state")
-                    except Exception as e:
-                        logging.warning(f"Failed to init Ruckig from robot state: {e}, using first action")
-                        first_action = action_queue[0]
-                        ruckig_inp.current_position = list(np.asarray(first_action[:DOF], dtype=float))
-                        ruckig_inp.current_velocity = [0.0] * DOF
-                        ruckig_inp.current_acceleration = [0.0] * DOF
-                        ruckig_initialized = True
-
-                # 设置目标（如果还没设置或已到达上一个目标）
-                if not ruckig_target_set and len(action_queue) >= lookahead:
-                    target_idx = lookahead - 1
-                    target_action = action_queue[target_idx]
-                    ruckig_inp.target_position = list(np.asarray(target_action[:DOF], dtype=float))
-                    # 估算目标速度（前向差分）
-                    if len(action_queue) > lookahead:
-                        next_action = action_queue[lookahead]
-                        target_vel = (np.asarray(next_action[:DOF], dtype=float) - np.asarray(target_action[:DOF], dtype=float)) / step_time
-                        ruckig_inp.target_velocity = list(target_vel)
+                            # 检查是否到达目标
+                            if result == Result.Finished:
+                                # 到达目标，消耗 action_queue 前 lookahead 个动作
+                                for _ in range(min(lookahead, len(action_queue))):
+                                    action_queue.popleft()
+                                ruckig_target_set = False  # 触发设置新目标
+                        except Exception as e:
+                            logging.exception(f"Ruckig update failed: {e}, falling back to raw action")
+                            # 降级：直接发送原始动作
+                            action_to_send = action_queue.popleft()
+                            if print_log:
+                                logger.log(action_to_send[:7])
+                            robot.send_action_np(action_to_send[:7])
+                            last_sent_action = action_to_send
+                            action_step_counter += 1
                     else:
-                        ruckig_inp.target_velocity = [0.0] * DOF  # 队列末尾，速度归零
-                    ruckig_inp.target_acceleration = [0.0] * DOF
-                    ruckig_target_set = True
-
-                # Ruckig 更新
-                if ruckig_target_set:
-                    try:
-                        result = ruckig_instance.update(ruckig_inp, ruckig_out)
-                        # 发送平滑后的位置
-                        smoothed_pos = np.array(ruckig_out.new_position)
-                        gripper_val = action_queue[0][DOF]  # gripper 直接透传
-                        action_to_send = np.concatenate([smoothed_pos, [gripper_val]])
-                        if print_log:
-                            logger.log(action_to_send[:7])
-                        robot.send_action_np(action_to_send[:7])
-                        last_sent_action = action_to_send
-                        action_step_counter += 1
-
-                        # 更新 Ruckig 状态（为下一次 update 准备）
-                        ruckig_out.pass_to_input(ruckig_inp)
-
-                        # 检查是否到达目标
-                        if result == Result.Finished:
-                            # 到达目标，消耗 action_queue 前 lookahead 个动作
-                            for _ in range(min(lookahead, len(action_queue))):
-                                action_queue.popleft()
-                            ruckig_target_set = False  # 触发设置新目标
-                    except Exception as e:
-                        logging.exception(f"Ruckig update failed: {e}, falling back to raw action")
-                        # 降级：直接发送原始动作
+                        # 队列长度不足，降级直接发送
                         action_to_send = action_queue.popleft()
                         if print_log:
                             logger.log(action_to_send[:7])
@@ -602,33 +616,25 @@ def main():
                         last_sent_action = action_to_send
                         action_step_counter += 1
                 else:
-                    # 队列长度不足，降级直接发送
+                    # ==== 原始逻辑（无 Ruckig）====
                     action_to_send = action_queue.popleft()
                     if print_log:
                         logger.log(action_to_send[:7])
                     robot.send_action_np(action_to_send[:7])
                     last_sent_action = action_to_send
                     action_step_counter += 1
-            else:
-                # ==== 原始逻辑（无 Ruckig）====
-                action_to_send = action_queue.popleft()
-                if print_log:
-                    logger.log(action_to_send[:7])
-                robot.send_action_np(action_to_send[:7])
-                last_sent_action = action_to_send
-                action_step_counter += 1
-                # print(f'publish an action:{time.perf_counter()},action counter:{action_step_counter}')
+                    # print(f'publish an action:{time.perf_counter()},action counter:{action_step_counter}')
 
-        # 2.5 统计
-        i += 1
-        dt_s = time.perf_counter() - t0
-        # print(f"loop {i} dt={dt_s:.3f} s")
-        time.sleep(max(step_time - dt_s,0))
-
-    # ==== 3. 结束 ====
-    in_q.put(None)      # 通知子进程退出
-    proc.join()
-    robot.disconnect()
+            # 2.5 统计
+            i += 1
+            dt_s = time.perf_counter() - t0
+            # print(f"loop {i} dt={dt_s:.3f} s")
+            time.sleep(max(step_time - dt_s,0))
+    finally:
+        # ==== 3. 结束 ====
+        in_q.put(None)      # 通知子进程退出
+        proc.join()
+        robot.disconnect()
 
 if __name__ == "__main__":
     main()
