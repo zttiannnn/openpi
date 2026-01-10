@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
+# import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
 import time
 import argparse
 import draccus
@@ -535,7 +535,7 @@ def main():
             # 3. 如果 action_queue 有动作，发给 robot
             if action_queue:
                 if ruckig_enabled:
-                    # ==== Ruckig Streaming 平滑 ====
+                    # ==== 方案 B：每步更新目标，不等待 Finished ====
                     lookahead = args.ruckig_lookahead
 
                     # 首次初始化：从机械臂读取当前状态
@@ -555,60 +555,36 @@ def main():
                             ruckig_inp.current_acceleration = [0.0] * DOF
                             ruckig_initialized = True
 
-                    # 设置目标（如果还没设置或已到达上一个目标）
-                    if not ruckig_target_set and len(action_queue) >= lookahead:
-                        target_idx = lookahead - 1
-                        target_action = action_queue[target_idx]
-                        target_pos = np.asarray(target_action[:DOF], dtype=float)
-                        ruckig_inp.target_position = list(target_pos)
-                        # 使用中心差分计算 target_velocity: (next - prev) / (2 * dt)
-                        if target_idx > 0 and len(action_queue) > target_idx + 1:
-                            prev_action = action_queue[target_idx - 1]
-                            next_action = action_queue[target_idx + 1]
-                            prev_pos = np.asarray(prev_action[:DOF], dtype=float)
-                            next_pos = np.asarray(next_action[:DOF], dtype=float)
-                            target_vel = (next_pos - prev_pos) / (2 * step_time)
-                            ruckig_inp.target_velocity = list(target_vel)
-                        else:
-                            ruckig_inp.target_velocity = [0.0] * DOF  # 边界情况，速度归零
-                        # target_acceleration 不设置，使用 Ruckig 默认值
-                        ruckig_inp.minimum_duration = step_time * lookahead
-                        ruckig_target_set = True
+                    # 每步都更新目标：取 lookahead 步后的动作作为目标
+                    # 如果队列长度不足，取队列最后一个
+                    target_idx = min(lookahead - 1, len(action_queue) - 1)
+                    target_action = action_queue[target_idx]
+                    target_pos = np.asarray(target_action[:DOF], dtype=float)
+                    ruckig_inp.target_position = list(target_pos)
+                    ruckig_inp.target_velocity = [0.0] * DOF  # 不设置目标速度
+                    ruckig_inp.target_acceleration = [0.0] * DOF
 
-                    # Ruckig 更新
-                    if ruckig_target_set:
-                        try:
-                            result = ruckig_instance.update(ruckig_inp, ruckig_out)
-                            # 发送平滑后的位置
-                            smoothed_pos = np.array(ruckig_out.new_position)
-                            gripper_val = action_queue[0][DOF]  # gripper 直接透传
-                            action_to_send = np.concatenate([smoothed_pos, [gripper_val]])
-                            if print_log:
-                                logger.log(action_to_send[:7])
-                            robot.send_action_np(action_to_send[:7])
-                            last_sent_action = action_to_send
-                            action_step_counter += 1
+                    # Ruckig 更新（让 Ruckig 自动重规划平滑轨迹）
+                    try:
+                        result = ruckig_instance.update(ruckig_inp, ruckig_out)
+                        # 发送平滑后的位置
+                        smoothed_pos = np.array(ruckig_out.new_position)
+                        gripper_val = action_queue[0][DOF]  # gripper 直接透传
+                        action_to_send = np.concatenate([smoothed_pos, [gripper_val]])
+                        if print_log:
+                            logger.log(action_to_send[:7])
+                        robot.send_action_np(action_to_send[:7])
+                        last_sent_action = action_to_send
+                        action_step_counter += 1
 
-                            # 更新 Ruckig 状态（为下一次 update 准备）
-                            ruckig_out.pass_to_input(ruckig_inp)
+                        # 更新 Ruckig 状态（为下一次 update 准备）
+                        ruckig_out.pass_to_input(ruckig_inp)
 
-                            # 检查是否到达目标
-                            if result == Result.Finished:
-                                # 到达目标，消耗 action_queue 前 lookahead 个动作
-                                for _ in range(min(lookahead, len(action_queue))):
-                                    action_queue.popleft()
-                                ruckig_target_set = False  # 触发设置新目标
-                        except Exception as e:
-                            logging.exception(f"Ruckig update failed: {e}, falling back to raw action")
-                            # 降级：直接发送原始动作
-                            action_to_send = action_queue.popleft()
-                            if print_log:
-                                logger.log(action_to_send[:7])
-                            robot.send_action_np(action_to_send[:7])
-                            last_sent_action = action_to_send
-                            action_step_counter += 1
-                    else:
-                        # 队列长度不足，降级直接发送
+                        # 每步消耗一个 action（保持与控制周期同步）
+                        action_queue.popleft()
+                    except Exception as e:
+                        logging.exception(f"Ruckig update failed: {e}, falling back to raw action")
+                        # 降级：直接发送原始动作
                         action_to_send = action_queue.popleft()
                         if print_log:
                             logger.log(action_to_send[:7])
