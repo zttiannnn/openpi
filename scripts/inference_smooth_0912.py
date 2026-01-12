@@ -317,12 +317,22 @@ def main():
     parser.add_argument("--ruckig_max_vel", type=float, default=200000.0, help="Ruckig 最大关节速度 (Piper单位/s)，建议根据实际动作范围调整")
     parser.add_argument("--ruckig_max_acc", type=float, default=500000.0, help="Ruckig 最大关节加速度 (Piper单位/s²)")
     parser.add_argument("--ruckig_max_jerk", type=float, default=5000000.0, help="Ruckig 最大 Jerk (Piper单位/s³)")
+    # 日志路径
+    parser.add_argument("--log_dir", type=str, default="/home/test/test_tra", help="日志文件保存目录")
     args = parser.parse_args()
 
     set_seeds(args.seed)
 
-    logger = NumpyCSVLogger("/home/test/test_tra/12500_ewa_07_1.csv", mode="w")
+    # 创建日志记录器
+    import os
+    from datetime import datetime
+    log_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    os.makedirs(args.log_dir, exist_ok=True)
+    logger_action = NumpyCSVLogger(os.path.join(args.log_dir, f"action_sent_{log_timestamp}.csv"), mode="w")
+    logger_end_pose = NumpyCSVLogger(os.path.join(args.log_dir, f"end_pose_{log_timestamp}.csv"), mode="w")
+    logger_joint_state = NumpyCSVLogger(os.path.join(args.log_dir, f"joint_state_{log_timestamp}.csv"), mode="w")
     print_log = True
+    print(f"Logging to {args.log_dir} with timestamp {log_timestamp}")
 
     # 解析摄像头配置
     if args.cameras is not None:
@@ -384,7 +394,7 @@ def main():
         ruckig_inp = None
         ruckig_out = None
         ruckig_initialized = False
-        ruckig_target_set = False
+        ruckig_step_counter = 0  # 稀疏采样计数器
         last_sent_action = None  # 用于降级时保持静止
         DOF = 6  # 关节数，不含 gripper
 
@@ -535,7 +545,7 @@ def main():
             # 3. 如果 action_queue 有动作，发给 robot
             if action_queue:
                 if ruckig_enabled:
-                    # ==== 方案 B：每步更新目标，不等待 Finished ====
+                    # ==== 稀疏采样 + Ruckig 平滑 ====
                     lookahead = args.ruckig_lookahead
 
                     # 首次初始化：从机械臂读取当前状态
@@ -555,7 +565,22 @@ def main():
                             ruckig_inp.current_acceleration = [0.0] * DOF
                             ruckig_initialized = True
 
+                    # # 稀疏采样：在即将到达目标时（lookahead-1 步）更新新目标
+
+                    # # 这样 Ruckig 会从当前运动状态平滑过渡到新目标，无需估计 target_velocity
+                    # if ruckig_step_counter == lookahead - 1 or ruckig_step_counter == 0:
+                    #     # 首次（step 0）或即将到达目标时（step lookahead-1），设置/更新目标
+                    #     # 目标选取：取队列中 lookahead-1 位置的动作
+                    #     target_idx = min(lookahead - 1, len(action_queue) - 1)
+                    #     target_action = action_queue[target_idx]
+                    #     target_pos = np.asarray(target_action[:DOF], dtype=float)
+                    #     ruckig_inp.target_position = list(target_pos)
+                    #     # target_velocity 设为 0，Ruckig 会使用当前运动状态重新规划平滑轨迹
+                    #     ruckig_inp.target_velocity = [0.0] * DOF
+                    #     ruckig_inp.target_acceleration = [0.0] * DOF
+
                     # 每步都更新目标：取 lookahead 步后的动作作为目标
+                    
                     # 如果队列长度不足，取队列最后一个
                     target_idx = min(lookahead - 1, len(action_queue) - 1)
                     target_action = action_queue[target_idx]
@@ -565,6 +590,7 @@ def main():
                     ruckig_inp.target_acceleration = [0.0] * DOF
 
                     # Ruckig 更新（让 Ruckig 自动重规划平滑轨迹）
+                    # Ruckig 更新
                     try:
                         result = ruckig_instance.update(ruckig_inp, ruckig_out)
                         # 发送平滑后的位置
@@ -572,30 +598,47 @@ def main():
                         gripper_val = action_queue[0][DOF]  # gripper 直接透传
                         action_to_send = np.concatenate([smoothed_pos, [gripper_val]])
                         if print_log:
-                            logger.log(action_to_send[:7])
+                            logger_action.log(time.perf_counter(), action_to_send[:7])
+                            # 记录末端位姿和关节状态
+                            try:
+                                end_pose_msg = robot.piper.GetArmEndPoseMsgs()
+                                pose = end_pose_msg.end_pose
+                                logger_end_pose.log(time.perf_counter(), 
+                                    pose.X_axis / 1000.0, pose.Y_axis / 1000.0, pose.Z_axis / 1000.0,
+                                    pose.RX_axis / 1000.0, pose.RY_axis / 1000.0, pose.RZ_axis / 1000.0)
+                                joint_msg = robot.piper.GetArmJointMsgs()
+                                js = joint_msg.joint_state
+                                logger_joint_state.log(time.perf_counter(),
+                                    js.joint_1 / 1000.0, js.joint_2 / 1000.0, js.joint_3 / 1000.0,
+                                    js.joint_4 / 1000.0, js.joint_5 / 1000.0, js.joint_6 / 1000.0)
+                            except Exception:
+                                pass
                         robot.send_action_np(action_to_send[:7])
                         last_sent_action = action_to_send
                         action_step_counter += 1
 
-                        # 更新 Ruckig 状态（为下一次 update 准备）
+                        # 更新 Ruckig 状态
                         ruckig_out.pass_to_input(ruckig_inp)
 
-                        # 每步消耗一个 action（保持与控制周期同步）
+                        # 每步消耗一个 action
                         action_queue.popleft()
+                        # 更新稀疏采样计数器
+                        ruckig_step_counter = (ruckig_step_counter + 1) % lookahead
                     except Exception as e:
                         logging.exception(f"Ruckig update failed: {e}, falling back to raw action")
                         # 降级：直接发送原始动作
                         action_to_send = action_queue.popleft()
                         if print_log:
-                            logger.log(action_to_send[:7])
+                            logger_action.log(time.perf_counter(), action_to_send[:7])
                         robot.send_action_np(action_to_send[:7])
                         last_sent_action = action_to_send
                         action_step_counter += 1
+                        ruckig_step_counter = (ruckig_step_counter + 1) % lookahead
                 else:
                     # ==== 原始逻辑（无 Ruckig）====
                     action_to_send = action_queue.popleft()
                     if print_log:
-                        logger.log(action_to_send[:7])
+                        logger_action.log(time.perf_counter(), action_to_send[:7])
                     robot.send_action_np(action_to_send[:7])
                     last_sent_action = action_to_send
                     action_step_counter += 1
@@ -611,6 +654,11 @@ def main():
         in_q.put(None)      # 通知子进程退出
         proc.join()
         robot.disconnect()
+        # 关闭日志
+        logger_action.close()
+        logger_end_pose.close()
+        logger_joint_state.close()
+        print(f"Logs saved to {args.log_dir}")
 
 if __name__ == "__main__":
     main()
