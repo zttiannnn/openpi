@@ -5,6 +5,7 @@ import time
 import argparse
 import draccus
 import logging
+logging.basicConfig(level=logging.DEBUG)
 import multiprocessing as mp
 import collections
 import yaml
@@ -586,10 +587,17 @@ def main():
                     target_action = action_queue[target_idx]
                     target_pos = np.asarray(target_action[:DOF], dtype=float)
                     ruckig_inp.target_position = list(target_pos)
-                    ruckig_inp.target_velocity = [0.0] * DOF  # 不设置目标速度
+                    
+                    # 基于运动学估算 target_velocity: v_target = v_current + a_current * Δt
+                    duration = step_time * lookahead
+                    current_vel = np.array(ruckig_inp.current_velocity)
+                    current_acc = np.array(ruckig_inp.current_acceleration)
+                    target_vel = current_vel + current_acc * duration
+                    # 限制在约束范围内
+                    target_vel = np.clip(target_vel, -args.ruckig_max_vel, args.ruckig_max_vel)
+                    ruckig_inp.target_velocity = list(target_vel)
                     ruckig_inp.target_acceleration = [0.0] * DOF
 
-                    # Ruckig 更新（让 Ruckig 自动重规划平滑轨迹）
                     # Ruckig 更新
                     try:
                         result = ruckig_instance.update(ruckig_inp, ruckig_out)
@@ -620,8 +628,23 @@ def main():
                         # 更新 Ruckig 状态
                         ruckig_out.pass_to_input(ruckig_inp)
 
-                        # 每步消耗一个 action
-                        action_queue.popleft()
+                        # 基于距离的动态 popleft：找到 smoothed_pos 最接近的 action
+                        search_range = min(max(1, lookahead // 2), len(action_queue))
+                        distances = []
+                        for idx in range(search_range):
+                            action_pos = np.asarray(action_queue[idx][:DOF], dtype=float)
+                            dist = np.linalg.norm(smoothed_pos - action_pos)
+                            distances.append(dist)
+                        closest_idx = int(np.argmin(distances))
+                        
+                        # 记录距离日志（用于调试）
+                        logging.debug(f"Distances: {[f'{d:.1f}' for d in distances]}, closest_idx={closest_idx}")
+                        
+                        # 如果 closest_idx > 0，消耗 closest_idx 个 action
+                        # 如果 closest_idx == 0，不消耗（smoothed_pos 还没超过 queue[0]）
+                        if closest_idx > 0:
+                            for _ in range(closest_idx):
+                                action_queue.popleft()
                         # 更新稀疏采样计数器
                         ruckig_step_counter = (ruckig_step_counter + 1) % lookahead
                     except Exception as e:
