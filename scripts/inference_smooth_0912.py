@@ -5,7 +5,7 @@ import time
 import argparse
 import draccus
 import logging
-logging.basicConfig(level=logging.DEBUG)
+# logging.basicConfig(level=logging.DEBUG)
 import multiprocessing as mp
 import collections
 import yaml
@@ -207,6 +207,66 @@ def smooth_horizon(actions: np.ndarray, method: str = "none", window: int = 3, e
     else:
         raise ValueError(f"Unknown horizon smoothing method: {method!r}")
 
+def log_robot_state(robot, logger_end_pose, logger_joint_state, logger_joint_vel):
+    """记录末端位姿、关节角度、关节速度"""
+    # 记录末端位姿 (only pose, no velocity)
+    try:
+        end_pose_msg = robot.piper.GetArmEndPoseMsgs()
+        if end_pose_msg is not None:
+            pose = getattr(end_pose_msg, "end_pose", end_pose_msg)
+            if hasattr(pose, "X_axis"):
+                # 日志格式: timestamp, X, Y, Z, RX, RY, RZ (7列)
+                logger_end_pose.log(time.perf_counter(), 
+                    pose.X_axis / 1000.0, pose.Y_axis / 1000.0, pose.Z_axis / 1000.0,
+                    pose.RX_axis / 1000.0, pose.RY_axis / 1000.0, pose.RZ_axis / 1000.0)
+    except Exception:
+        pass
+
+    # 记录关节角度反馈
+    try:
+        joint_msg = robot.piper.GetArmJointMsgs()
+        if joint_msg is not None:
+            js = getattr(joint_msg, "joint_state", joint_msg)
+            if hasattr(js, "joint_1"):
+                # 日志格式: timestamp, J1, J2, J3, J4, J5, J6 (7列)
+                logger_joint_state.log(time.perf_counter(),
+                    js.joint_1 / 1000.0, js.joint_2 / 1000.0, js.joint_3 / 1000.0,
+                    js.joint_4 / 1000.0, js.joint_5 / 1000.0, js.joint_6 / 1000.0)
+    except Exception:
+        pass
+    
+    # 记录关节速度 (从 GetMotorStates 或 GetArmHighSpdInfoMsgs)
+    try:
+        joint_vel = [0.0] * 6
+        if hasattr(robot.piper, "GetMotorStates"):
+            motor_states = robot.piper.GetMotorStates()
+        else:
+            motor_states = robot.piper.GetArmHighSpdInfoMsgs()
+        
+        if motor_states is not None:
+            # 返回格式: (time_stamp, Hz, motor_1, motor_2, ..., motor_6)
+            if isinstance(motor_states, (list, tuple)) and len(motor_states) > 2:
+                for i in range(6):
+                    if i + 2 < len(motor_states):
+                        motor_info = motor_states[i + 2]
+                        if hasattr(motor_info, "motor_speed"):
+                            joint_vel[i] = motor_info.motor_speed / 1000.0  # 0.001rad/s -> rad/s
+            else:
+                # 如果是对象，直接访问属性
+                for i in range(6):
+                    joint_key = f"motor_{i+1}"
+                    if hasattr(motor_states, joint_key):
+                        motor_info = getattr(motor_states, joint_key)
+                        if hasattr(motor_info, "motor_speed"):
+                            joint_vel[i] = motor_info.motor_speed / 1000.0
+        
+        # 日志格式: timestamp, J1_vel, J2_vel, J3_vel, J4_vel, J5_vel, J6_vel (7列)
+        logger_joint_vel.log(time.perf_counter(),
+            joint_vel[0], joint_vel[1], joint_vel[2],
+            joint_vel[3], joint_vel[4], joint_vel[5])
+    except Exception:
+        pass
+
 def set_seeds(seed):
     os.environ.setdefault("PYTHONHASHSEED", str(seed))
     random.seed(seed)
@@ -297,7 +357,7 @@ def main():
     parser.add_argument("--cameras", type=str, required=False, help="camera config yaml", default=None)
     parser.add_argument("--max_relative_target", type=int, required=False, default=None)
     parser.add_argument("--use_degrees", action="store_true")
-    parser.add_argument("--action_steps", type=int, required=False, default=20, help="number of action steps to execute before next inference")
+    parser.add_argument("--action_steps", type=int, required=False, default=50, help="number of action steps to execute before next inference")
     parser.add_argument("--smooth_type", type=str, default="cubic", choices=["linear", "cubic", "quintic", "ema"], help="动作平滑策略: linear/cubic/quintic/ema")
     parser.add_argument("--ema_alpha", type=float, default=0.5, help="EMA平滑时新动作权重alpha,0~1")
     parser.add_argument("--align_mode", type=str, default="step", choices=["step", "euclidean"], help="新动作对齐方式: step(步数) 或 euclidean(欧氏距离)")
@@ -319,7 +379,7 @@ def main():
     parser.add_argument("--ruckig_max_acc", type=float, default=500000.0, help="Ruckig 最大关节加速度 (Piper单位/s²)")
     parser.add_argument("--ruckig_max_jerk", type=float, default=5000000.0, help="Ruckig 最大 Jerk (Piper单位/s³)")
     # 日志路径
-    parser.add_argument("--log_dir", type=str, default="/home/test/test_tra", help="日志文件保存目录")
+    parser.add_argument("--log_dir", type=str, default="/home/test/jemotor/dsrl_pi05/openpi/trajectory_plots/csv_data/", help="日志文件保存目录")
     args = parser.parse_args()
 
     set_seeds(args.seed)
@@ -332,6 +392,7 @@ def main():
     logger_action = NumpyCSVLogger(os.path.join(args.log_dir, f"action_sent_{log_timestamp}.csv"), mode="w")
     logger_end_pose = NumpyCSVLogger(os.path.join(args.log_dir, f"end_pose_{log_timestamp}.csv"), mode="w")
     logger_joint_state = NumpyCSVLogger(os.path.join(args.log_dir, f"joint_state_{log_timestamp}.csv"), mode="w")
+    logger_joint_vel = NumpyCSVLogger(os.path.join(args.log_dir, f"joint_vel_{log_timestamp}.csv"), mode="w")
     print_log = True
     print(f"Logging to {args.log_dir} with timestamp {log_timestamp}")
 
@@ -407,6 +468,8 @@ def main():
             ruckig_inp.max_velocity = [args.ruckig_max_vel] * DOF
             ruckig_inp.max_acceleration = [args.ruckig_max_acc] * DOF
             ruckig_inp.max_jerk = [args.ruckig_max_jerk] * DOF
+            lookahead = args.ruckig_lookahead
+            ruckig_inp.minimum_duration = lookahead * step_time
             logging.info(f"Ruckig smoothing enabled: lookahead={args.ruckig_lookahead}, "
                          f"max_vel={args.ruckig_max_vel}, max_acc={args.ruckig_max_acc}, max_jerk={args.ruckig_max_jerk}")
 
@@ -592,35 +655,40 @@ def main():
                     duration = step_time * lookahead
                     current_vel = np.array(ruckig_inp.current_velocity)
                     current_acc = np.array(ruckig_inp.current_acceleration)
-                    target_vel = current_vel + current_acc * duration
+                    # 方案1：限制速度增量，避免加速度过大时估算值爆炸
+                    vel_delta = current_acc * duration
+                    max_vel_delta = args.ruckig_max_vel * 0.1  # 增量不超过 max_vel 的 30%
+                    vel_delta = np.clip(vel_delta, -max_vel_delta, max_vel_delta)
+                    target_vel = current_vel + vel_delta
                     # 限制在约束范围内
                     target_vel = np.clip(target_vel, -args.ruckig_max_vel, args.ruckig_max_vel)
-                    ruckig_inp.target_velocity = list(target_vel)
+                    # ruckig_inp.target_velocity = list(target_vel)
+                    ruckig_inp.target_velocity = [0.0] * DOF  # 方案2：直接设为 0
                     ruckig_inp.target_acceleration = [0.0] * DOF
 
                     # Ruckig 更新
+                    ruckig_success = False
                     try:
                         result = ruckig_instance.update(ruckig_inp, ruckig_out)
+                        ruckig_success = True
+                    except Exception as e:
+                        # 方案3：回退到 target_velocity = 0 重试
+                        logging.warning(f"Ruckig failed with estimated vel, retrying with target_vel=0: {e}")
+                        ruckig_inp.target_velocity = [0.0] * DOF
+                        try:
+                            result = ruckig_instance.update(ruckig_inp, ruckig_out)
+                            ruckig_success = True
+                        except Exception as e2:
+                            logging.exception(f"Ruckig retry also failed: {e2}, falling back to raw action")
+                    
+                    if ruckig_success:
                         # 发送平滑后的位置
                         smoothed_pos = np.array(ruckig_out.new_position)
                         gripper_val = action_queue[0][DOF]  # gripper 直接透传
                         action_to_send = np.concatenate([smoothed_pos, [gripper_val]])
                         if print_log:
                             logger_action.log(time.perf_counter(), action_to_send[:7])
-                            # 记录末端位姿和关节状态
-                            try:
-                                end_pose_msg = robot.piper.GetArmEndPoseMsgs()
-                                pose = end_pose_msg.end_pose
-                                logger_end_pose.log(time.perf_counter(), 
-                                    pose.X_axis / 1000.0, pose.Y_axis / 1000.0, pose.Z_axis / 1000.0,
-                                    pose.RX_axis / 1000.0, pose.RY_axis / 1000.0, pose.RZ_axis / 1000.0)
-                                joint_msg = robot.piper.GetArmJointMsgs()
-                                js = joint_msg.joint_state
-                                logger_joint_state.log(time.perf_counter(),
-                                    js.joint_1 / 1000.0, js.joint_2 / 1000.0, js.joint_3 / 1000.0,
-                                    js.joint_4 / 1000.0, js.joint_5 / 1000.0, js.joint_6 / 1000.0)
-                            except Exception:
-                                pass
+                            log_robot_state(robot, logger_end_pose, logger_joint_state, logger_joint_vel)
                         robot.send_action_np(action_to_send[:7])
                         last_sent_action = action_to_send
                         action_step_counter += 1
@@ -628,31 +696,16 @@ def main():
                         # 更新 Ruckig 状态
                         ruckig_out.pass_to_input(ruckig_inp)
 
-                        # 基于距离的动态 popleft：找到 smoothed_pos 最接近的 action
-                        search_range = min(max(1, lookahead // 2), len(action_queue))
-                        distances = []
-                        for idx in range(search_range):
-                            action_pos = np.asarray(action_queue[idx][:DOF], dtype=float)
-                            dist = np.linalg.norm(smoothed_pos - action_pos)
-                            distances.append(dist)
-                        closest_idx = int(np.argmin(distances))
-                        
-                        # 记录距离日志（用于调试）
-                        logging.debug(f"Distances: {[f'{d:.1f}' for d in distances]}, closest_idx={closest_idx}")
-                        
-                        # 如果 closest_idx > 0，消耗 closest_idx 个 action
-                        # 如果 closest_idx == 0，不消耗（smoothed_pos 还没超过 queue[0]）
-                        if closest_idx > 0:
-                            for _ in range(closest_idx):
-                                action_queue.popleft()
+                        # 每步消耗一个 action
+                        action_queue.popleft()
                         # 更新稀疏采样计数器
                         ruckig_step_counter = (ruckig_step_counter + 1) % lookahead
-                    except Exception as e:
-                        logging.exception(f"Ruckig update failed: {e}, falling back to raw action")
+                    else:
                         # 降级：直接发送原始动作
                         action_to_send = action_queue.popleft()
                         if print_log:
                             logger_action.log(time.perf_counter(), action_to_send[:7])
+                            log_robot_state(robot, logger_end_pose, logger_joint_state, logger_joint_vel)
                         robot.send_action_np(action_to_send[:7])
                         last_sent_action = action_to_send
                         action_step_counter += 1
@@ -662,6 +715,7 @@ def main():
                     action_to_send = action_queue.popleft()
                     if print_log:
                         logger_action.log(time.perf_counter(), action_to_send[:7])
+                        log_robot_state(robot, logger_end_pose, logger_joint_state, logger_joint_vel)
                     robot.send_action_np(action_to_send[:7])
                     last_sent_action = action_to_send
                     action_step_counter += 1
@@ -681,6 +735,7 @@ def main():
         logger_action.close()
         logger_end_pose.close()
         logger_joint_state.close()
+        logger_joint_vel.close()
         print(f"Logs saved to {args.log_dir}")
 
 if __name__ == "__main__":
