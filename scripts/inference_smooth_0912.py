@@ -357,7 +357,7 @@ def main():
     parser.add_argument("--cameras", type=str, required=False, help="camera config yaml", default=None)
     parser.add_argument("--max_relative_target", type=int, required=False, default=None)
     parser.add_argument("--use_degrees", action="store_true")
-    parser.add_argument("--action_steps", type=int, required=False, default=50, help="number of action steps to execute before next inference")
+    parser.add_argument("--action_steps", type=int, required=False, default=20, help="number of action steps to execute before next inference")
     parser.add_argument("--smooth_type", type=str, default="cubic", choices=["linear", "cubic", "quintic", "ema"], help="动作平滑策略: linear/cubic/quintic/ema")
     parser.add_argument("--ema_alpha", type=float, default=0.5, help="EMA平滑时新动作权重alpha,0~1")
     parser.add_argument("--align_mode", type=str, default="step", choices=["step", "euclidean"], help="新动作对齐方式: step(步数) 或 euclidean(欧氏距离)")
@@ -393,6 +393,7 @@ def main():
     logger_end_pose = NumpyCSVLogger(os.path.join(args.log_dir, f"end_pose_{log_timestamp}.csv"), mode="w")
     logger_joint_state = NumpyCSVLogger(os.path.join(args.log_dir, f"joint_state_{log_timestamp}.csv"), mode="w")
     logger_joint_vel = NumpyCSVLogger(os.path.join(args.log_dir, f"joint_vel_{log_timestamp}.csv"), mode="w")
+    logger_merge_events = NumpyCSVLogger(os.path.join(args.log_dir, f"merge_events_{log_timestamp}.csv"), mode="w")
     print_log = True
     print(f"Logging to {args.log_dir} with timestamp {log_timestamp}")
 
@@ -522,6 +523,11 @@ def main():
                 recv_idx = idx
                 logging.debug(f"got result #{recv_idx}")
 
+                # 记录 merge 事件时间戳 (用于可视化)
+                if print_log:
+                    # columns: timestamp, recv_idx, queue_len_before_merge
+                    logger_merge_events.log(time.perf_counter(), recv_idx, len(action_queue))
+
                 # 1. 记录未执行的旧动作
                 old_actions = list(action_queue)
                 action_queue.clear()
@@ -645,26 +651,41 @@ def main():
 
                     # 每步都更新目标：取 lookahead 步后的动作作为目标
                     
-                    # 如果队列长度不足，取队列最后一个
-                    target_idx = min(lookahead - 1, len(action_queue) - 1)
-                    target_action = action_queue[target_idx]
-                    target_pos = np.asarray(target_action[:DOF], dtype=float)
-                    ruckig_inp.target_position = list(target_pos)
+                    # ===== 队列即将清空时的减速保护 =====
+                    # 当队列剩余动作 < 5 时，保持最后目标不变，减速停止
+                    QUEUE_LOW_THRESHOLD = 5
+                    queue_len = len(action_queue)
                     
-                    # 基于运动学估算 target_velocity: v_target = v_current + a_current * Δt
-                    duration = step_time * lookahead
-                    current_vel = np.array(ruckig_inp.current_velocity)
-                    current_acc = np.array(ruckig_inp.current_acceleration)
-                    # 方案1：限制速度增量，避免加速度过大时估算值爆炸
-                    vel_delta = current_acc * duration
-                    max_vel_delta = args.ruckig_max_vel * 0.1  # 增量不超过 max_vel 的 30%
-                    vel_delta = np.clip(vel_delta, -max_vel_delta, max_vel_delta)
-                    target_vel = current_vel + vel_delta
-                    # 限制在约束范围内
-                    target_vel = np.clip(target_vel, -args.ruckig_max_vel, args.ruckig_max_vel)
-                    # ruckig_inp.target_velocity = list(target_vel)
-                    ruckig_inp.target_velocity = [0.0] * DOF  # 方案2：直接设为 0
-                    ruckig_inp.target_acceleration = [0.0] * DOF
+                    if queue_len < QUEUE_LOW_THRESHOLD:
+                        # 队列即将清空：使用队列最后一个动作作为目标，并减速到 0
+                        target_action = action_queue[-1]  # 取最后一个
+                        target_pos = np.asarray(target_action[:DOF], dtype=float)
+                        ruckig_inp.target_position = list(target_pos)
+                        # 目标速度和加速度都设为 0，Ruckig 会自动规划减速停止
+                        ruckig_inp.target_velocity = [0.0] * DOF
+                        ruckig_inp.target_acceleration = [0.0] * DOF
+                        logging.debug(f"Ruckig decel mode: queue={queue_len}, holding last target")
+                    else:
+                        # 正常模式：取 lookahead 步后的动作作为目标
+                        target_idx = min(lookahead - 1, queue_len - 1)
+                        target_action = action_queue[target_idx]
+                        target_pos = np.asarray(target_action[:DOF], dtype=float)
+                        ruckig_inp.target_position = list(target_pos)
+                        
+                        # 基于运动学估算 target_velocity: v_target = v_current + a_current * Δt
+                        duration = step_time * lookahead
+                        current_vel = np.array(ruckig_inp.current_velocity)
+                        current_acc = np.array(ruckig_inp.current_acceleration)
+                        # 限制速度增量，避免加速度过大时估算值爆炸
+                        vel_delta = current_acc * duration
+                        max_vel_delta = args.ruckig_max_vel * 0.1  # 增量不超过 max_vel 的 10%
+                        vel_delta = np.clip(vel_delta, -max_vel_delta, max_vel_delta)
+                        target_vel = current_vel + vel_delta
+                        # 限制在约束范围内
+                        target_vel = np.clip(target_vel, -args.ruckig_max_vel, args.ruckig_max_vel)
+                        # 使用 target_velocity = 0 以简化（方案2）
+                        ruckig_inp.target_velocity = [0.0] * DOF
+                        ruckig_inp.target_acceleration = [0.0] * DOF
 
                     # Ruckig 更新
                     ruckig_success = False
@@ -736,6 +757,7 @@ def main():
         logger_end_pose.close()
         logger_joint_state.close()
         logger_joint_vel.close()
+        logger_merge_events.close()
         print(f"Logs saved to {args.log_dir}")
 
 if __name__ == "__main__":
