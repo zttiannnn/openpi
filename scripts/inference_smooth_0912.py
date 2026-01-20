@@ -390,18 +390,20 @@ def offline_spline_plan(
     sample_rate: int,
     dt: float,
     dof: int = 6,
+    start_velocity: np.ndarray = None,
 ) -> list:
     """
     离线三次样条插值规划。
     
     使用三次样条拟合关键点，保证 C2 连续（位置、速度、加速度连续）。
-    比 Ruckig 更稳定，不会规划失败。
+    当提供 start_velocity 时，使用 clamped 边界条件确保速度连续。
     
     Args:
         raw_actions: 原始动作序列 (H, 7)，前 6 列为关节，第 7 列为 gripper
         sample_rate: 采样频率（每 N 个动作采 1 个关键点）
         dt: 控制周期
         dof: 关节自由度（不含 gripper）
+        start_velocity: 起点速度 (dof,)，用于 clamped 边界条件
     
     Returns:
         List[ActionPoint]，规划后的动作序列
@@ -427,11 +429,21 @@ def offline_spline_plan(
     keypoint_times = np.array([idx * dt for idx in keypoint_indices])
     keypoint_positions = raw_actions[keypoint_indices, :dof]  # (num_keypoints, dof)
     
+    # 估计末端速度（用后两个关键点差分）
+    end_velocity = (keypoint_positions[-1] - keypoint_positions[-2]) / (keypoint_times[-1] - keypoint_times[-2])
+    
     # 为每个关节创建三次样条
     splines = []
     for j in range(dof):
-        # bc_type='natural' 使首尾二阶导数为 0，保证平滑
-        spline = CubicSpline(keypoint_times, keypoint_positions[:, j], bc_type='natural')
+        # 确定边界条件
+        if start_velocity is not None:
+            # 使用 clamped 边界条件：指定首尾速度
+            bc_type = ((1, start_velocity[j]), (1, end_velocity[j]))
+        else:
+            # 使用 natural 边界条件：首尾加速度为 0
+            bc_type = 'natural'
+        
+        spline = CubicSpline(keypoint_times, keypoint_positions[:, j], bc_type=bc_type)
         splines.append(spline)
     
     # 计算输出点数（从 t=0 到 t=最后一个关键点时间）
@@ -731,6 +743,7 @@ def main():
         ruckig_initialized = False
         ruckig_step_counter = 0  # 稀疏采样计数器
         last_sent_action = None  # 用于降级时保持静止
+        prev_sent_action = None  # 上一个发送的动作，用于计算速度
         DOF = 6  # 关节数，不含 gripper
 
         if ruckig_enabled:
@@ -906,17 +919,53 @@ def main():
                         action_queue.append(ap)
                     logging.info(f"Offline Ruckig: {len(smooth_actions)} merged -> {len(planned_points)} planned")
                 elif spline_offline_enabled:
-                    # ==== 离线样条插值模式：对融合结果进行规划 ====
-                    smooth_arr = np.array([np.asarray(a) for a in smooth_actions], dtype=float)
+                    # ==== 离线样条插值模式：直接用 spline 衔接当前状态和新动作 ====
+                    # 不使用 cubic_transition，直接用 spline 的 clamped 边界条件实现平滑衔接
+                    
+                    # 计算当前速度（用于 clamped 边界条件）
+                    if last_sent_action is not None and prev_sent_action is not None:
+                        current_pos = np.asarray(last_sent_action[:DOF], dtype=float)
+                        current_vel = (current_pos - np.asarray(prev_sent_action[:DOF], dtype=float)) / step_time
+                    else:
+                        current_pos = None
+                        current_vel = None
+                    
+                    # 构建对齐后的动作序列：用 current_pos 替代 new_actions[start_idx]
+                    if current_pos is not None and start_idx < len(new_actions):
+                        # 构建 aligned_actions: [current_pos+gripper] + new_actions[start_idx+1:]
+                        # Gripper 值使用原始 new_actions[start_idx] 的 gripper
+                        gripper_val = new_actions[start_idx, -1] if new_actions.ndim > 1 else 0.0
+                        current_action = np.concatenate([current_pos, [gripper_val]])
+                        
+                        if start_idx + 1 < len(new_actions):
+                            aligned_actions = np.vstack([current_action, new_actions[start_idx + 1:]])
+                        else:
+                            # 只剩一个点，无法拟合样条，直接返回
+                            action_queue.append(current_action)
+                            waiting_for_infer = False
+                            continue
+                    else:
+                        # 首次推理或无当前状态，直接使用 new_actions
+                        aligned_actions = new_actions
+                        current_vel = None
+                    
+                    # 调用样条拟合（使用 clamped 边界条件）
                     planned_points = offline_spline_plan(
-                        smooth_arr,
+                        aligned_actions,
                         sample_rate=args.ruckig_sample_rate,
                         dt=step_time,
                         dof=DOF,
+                        start_velocity=current_vel,
                     )
-                    for ap in planned_points:
+                    
+                    # 跳过第一个点（它等于 current_pos，避免重复）
+                    skip_first = current_pos is not None and len(planned_points) > 1
+                    for idx, ap in enumerate(planned_points):
+                        if skip_first and idx == 0:
+                            continue
                         action_queue.append(ap)
-                    logging.info(f"Offline Spline: {len(smooth_actions)} merged -> {len(planned_points)} planned")
+                    
+                    logging.info(f"Offline Spline (direct merge): {len(new_actions)} raw -> {len(aligned_actions)} aligned -> {len(planned_points)} planned, skip_first={skip_first}")
                 else:
                     # 普通模式：直接添加融合后的动作
                     for a in smooth_actions:
@@ -1127,6 +1176,7 @@ def main():
                             logger_action.log(time.perf_counter(), action_to_send[:7])
                             log_robot_state(robot, logger_end_pose, logger_joint_state, logger_joint_vel)
                         robot.send_action_np(action_to_send[:7])
+                        prev_sent_action = last_sent_action
                         last_sent_action = action_to_send
                         action_step_counter += 1
                         ruckig_step_counter = (ruckig_step_counter + 1) % lookahead
@@ -1138,6 +1188,7 @@ def main():
                         logger_action.log(time.perf_counter(), action_to_send[:7])
                         log_robot_state(robot, logger_end_pose, logger_joint_state, logger_joint_vel)
                     robot.send_action_np(action_to_send[:7])
+                    prev_sent_action = last_sent_action
                     last_sent_action = action_to_send
                     action_step_counter += 1
                 else:
@@ -1152,6 +1203,7 @@ def main():
                         logger_action.log(time.perf_counter(), action_to_send[:7])
                         log_robot_state(robot, logger_end_pose, logger_joint_state, logger_joint_vel)
                     robot.send_action_np(action_to_send[:7])
+                    prev_sent_action = last_sent_action
                     last_sent_action = action_to_send
                     action_step_counter += 1
                     # print(f'publish an action:{time.perf_counter()},action counter:{action_step_counter}')
