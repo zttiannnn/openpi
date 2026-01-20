@@ -22,11 +22,19 @@ from third_party.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from third_party.cameras.orbbec.configuration_orbbec import OrbbecCameraConfig
 
 try:
-    from ruckig import Ruckig, InputParameter, OutputParameter, Result
+    from ruckig import Ruckig, InputParameter, OutputParameter, Result, Trajectory
     RUCKIG_AVAILABLE = True
 except ImportError:
     RUCKIG_AVAILABLE = False
     logging.warning("Ruckig not installed. Ruckig smoothing will be disabled.")
+
+from dataclasses import dataclass
+
+@dataclass
+class ActionPoint:
+    """动作点，区分关键点和 Ruckig 插值点"""
+    action: np.ndarray    # 7-DoF 动作 (6 joints + gripper)
+    is_keypoint: bool     # True = 采样关键点, False = Ruckig 插值点
 
 def make_camera_config(cfg: dict):
     t = cfg.get('type')
@@ -347,6 +355,258 @@ def optimize_horizon_qp(new_actions: np.ndarray, lambda_acc: float = 0.1, veloci
                 sol[t, j] = val
     return sol
 
+
+def estimate_keypoint_velocity(raw_actions: np.ndarray, keypoint_idx: int, dt: float, dof: int = 6) -> np.ndarray:
+    """
+    用关键点前后的普通点差分估计该关键点处的速度。
+    
+    Args:
+        raw_actions: 原始动作序列 (H, D)
+        keypoint_idx: 关键点在原始序列中的索引
+        dt: 控制周期
+        dof: 关节自由度（不含 gripper）
+    
+    Returns:
+        速度向量 (dof,)
+    """
+    H = len(raw_actions)
+    if keypoint_idx == 0:
+        # 首个关键点：向前差分
+        if H > 1:
+            vel = (raw_actions[1, :dof] - raw_actions[0, :dof]) / dt
+        else:
+            vel = np.zeros(dof)
+    elif keypoint_idx >= H - 1:
+        # 末尾关键点：向后差分
+        vel = (raw_actions[H - 1, :dof] - raw_actions[H - 2, :dof]) / dt
+    else:
+        # 中间关键点：中心差分（用前后普通点）
+        vel = (raw_actions[keypoint_idx + 1, :dof] - raw_actions[keypoint_idx - 1, :dof]) / (2 * dt)
+    return vel
+
+
+def offline_spline_plan(
+    raw_actions: np.ndarray,
+    sample_rate: int,
+    dt: float,
+    dof: int = 6,
+) -> list:
+    """
+    离线三次样条插值规划。
+    
+    使用三次样条拟合关键点，保证 C2 连续（位置、速度、加速度连续）。
+    比 Ruckig 更稳定，不会规划失败。
+    
+    Args:
+        raw_actions: 原始动作序列 (H, 7)，前 6 列为关节，第 7 列为 gripper
+        sample_rate: 采样频率（每 N 个动作采 1 个关键点）
+        dt: 控制周期
+        dof: 关节自由度（不含 gripper）
+    
+    Returns:
+        List[ActionPoint]，规划后的动作序列
+    """
+    from scipy.interpolate import CubicSpline
+    
+    raw_actions = np.asarray(raw_actions, dtype=float)
+    H = len(raw_actions)
+    if H < 2:
+        return [ActionPoint(action=raw_actions[0], is_keypoint=True)] if H == 1 else []
+    
+    # 采样关键点索引
+    keypoint_indices = list(range(0, H, sample_rate))
+    # 确保最后一个点也是关键点
+    if keypoint_indices[-1] != H - 1:
+        keypoint_indices.append(H - 1)
+    
+    num_keypoints = len(keypoint_indices)
+    if num_keypoints < 2:
+        return [ActionPoint(action=raw_actions[0], is_keypoint=True)]
+    
+    # 关键点时间和位置
+    keypoint_times = np.array([idx * dt for idx in keypoint_indices])
+    keypoint_positions = raw_actions[keypoint_indices, :dof]  # (num_keypoints, dof)
+    
+    # 为每个关节创建三次样条
+    splines = []
+    for j in range(dof):
+        # bc_type='natural' 使首尾二阶导数为 0，保证平滑
+        spline = CubicSpline(keypoint_times, keypoint_positions[:, j], bc_type='natural')
+        splines.append(spline)
+    
+    # 计算输出点数（从 t=0 到 t=最后一个关键点时间）
+    total_time = keypoint_times[-1]
+    num_output_points = int(np.ceil(total_time / dt)) + 1
+    
+    result = []
+    for i in range(num_output_points):
+        t = i * dt
+        if t > total_time:
+            t = total_time
+        
+        # 对每个关节采样样条
+        pos = np.array([splines[j](t) for j in range(dof)])
+        
+        # Gripper 透传：找到对应时刻的原始动作索引
+        raw_idx = min(int(t / dt), H - 1)
+        gripper_val = raw_actions[raw_idx, dof]
+        
+        action = np.concatenate([pos, [gripper_val]])
+        
+        # 判断是否为关键点（用时间匹配）
+        is_kp = any(abs(t - kt) < 1e-6 for kt in keypoint_times)
+        result.append(ActionPoint(action=action, is_keypoint=is_kp))
+    
+    logging.info(f"Offline Spline plan: {H} raw -> {len(result)} planned, "
+                 f"{num_keypoints} keypoints, sample_rate={sample_rate}")
+    
+    return result
+
+
+def offline_ruckig_plan(
+    raw_actions: np.ndarray,
+    sample_rate: int,
+    dt: float,
+    max_vel: float,
+    max_acc: float,
+    max_jerk: float,
+    dof: int = 6,
+) -> list:
+    """
+    离线点到点 Ruckig 规划。
+    
+    Args:
+        raw_actions: 原始动作序列 (H, 7)，前 6 列为关节，第 7 列为 gripper
+        sample_rate: 采样频率（每 N 个动作采 1 个关键点）
+        dt: 控制周期
+        max_vel, max_acc, max_jerk: Ruckig 约束参数
+        dof: 关节自由度（不含 gripper）
+    
+    Returns:
+        List[ActionPoint]，规划后的动作序列
+    """
+    if not RUCKIG_AVAILABLE:
+        logging.warning("Ruckig not available, returning raw actions as ActionPoints")
+        return [ActionPoint(action=a, is_keypoint=(i % sample_rate == 0)) 
+                for i, a in enumerate(raw_actions)]
+    
+    raw_actions = np.asarray(raw_actions, dtype=float)
+    H = len(raw_actions)
+    if H < 2:
+        return [ActionPoint(action=raw_actions[0], is_keypoint=True)] if H == 1 else []
+    
+    # 采样关键点索引
+    keypoint_indices = list(range(0, H, sample_rate))
+    # 确保最后一个点也是关键点
+    if keypoint_indices[-1] != H - 1:
+        keypoint_indices.append(H - 1)
+    
+    num_keypoints = len(keypoint_indices)
+    if num_keypoints < 2:
+        return [ActionPoint(action=raw_actions[0], is_keypoint=True)]
+    
+    # 估计每个关键点的速度
+    keypoint_velocities = []
+    for kp_idx in keypoint_indices:
+        vel = estimate_keypoint_velocity(raw_actions, kp_idx, dt, dof)
+        keypoint_velocities.append(vel)
+    
+    # 逐段 Ruckig 规划
+    result = []
+    ruckig = Ruckig(dof, dt)
+    inp = InputParameter(dof)
+    out = OutputParameter(dof)
+    
+    # 设置约束
+    inp.max_velocity = [max_vel] * dof
+    inp.max_acceleration = [max_acc] * dof
+    inp.max_jerk = [max_jerk] * dof
+    
+    for seg_idx in range(num_keypoints - 1):
+        start_kp_idx = keypoint_indices[seg_idx]
+        end_kp_idx = keypoint_indices[seg_idx + 1]
+        
+        # 起点状态
+        inp.current_position = list(raw_actions[start_kp_idx, :dof])
+        inp.current_velocity = list(keypoint_velocities[seg_idx])
+        inp.current_acceleration = [0.0] * dof
+        
+        # 终点状态
+        inp.target_position = list(raw_actions[end_kp_idx, :dof])
+        inp.target_velocity = list(keypoint_velocities[seg_idx + 1])
+        inp.target_acceleration = [0.0] * dof
+        
+        # 设置最小持续时间（作为保底，避免过快）
+        segment_steps = end_kp_idx - start_kp_idx
+        inp.minimum_duration = segment_steps * dt * 0.9
+        
+        try:
+            # 计算轨迹
+            traj = Trajectory(dof)
+            calc_result = ruckig.calculate(inp, traj)
+            
+            if calc_result == Result.ErrorInvalidInput:
+                logging.warning(f"Ruckig segment {seg_idx} invalid input, using linear interpolation")
+                # 降级：线性插值
+                for j in range(segment_steps):
+                    t_ratio = j / segment_steps if segment_steps > 0 else 0
+                    interp_pos = (1 - t_ratio) * raw_actions[start_kp_idx, :dof] + t_ratio * raw_actions[end_kp_idx, :dof]
+                    gripper_val = raw_actions[start_kp_idx + j, dof] if (start_kp_idx + j) < H else raw_actions[-1, dof]
+                    action = np.concatenate([interp_pos, [gripper_val]])
+                    result.append(ActionPoint(action=action, is_keypoint=(j == 0)))
+                continue
+            
+            # 按 dt 采样轨迹
+            duration = traj.duration
+            num_samples = max(1, int(np.ceil(duration / dt)))
+            
+            for j in range(num_samples):
+                t = j * dt
+                if t > duration:
+                    t = duration
+                
+                # 获取该时刻的位置
+                new_pos, new_vel, new_acc = traj.at_time(t)
+                
+                # 非首段跳过 j=0（因为它和上一段的 duration 点重合）
+                if seg_idx > 0 and j == 0:
+                    continue
+                
+                # Gripper 透传：按比例取原始值
+                raw_idx = start_kp_idx + int(j * segment_steps / num_samples) if num_samples > 1 else start_kp_idx
+                raw_idx = min(raw_idx, H - 1)
+                gripper_val = raw_actions[raw_idx, dof]
+                
+                action = np.concatenate([np.array(new_pos), [gripper_val]])
+                is_kp = (seg_idx == 0 and j == 0)  # 只有首段第一个点是关键点
+                result.append(ActionPoint(action=action, is_keypoint=is_kp))
+            
+            # 添加 duration 时刻的点（确保边界对齐）
+            last_sample_time = (num_samples - 1) * dt
+            if last_sample_time < duration - 1e-6:
+                end_pos, end_vel, end_acc = traj.at_time(duration)
+                gripper_val = raw_actions[min(end_kp_idx, H - 1), dof]
+                action = np.concatenate([np.array(end_pos), [gripper_val]])
+                result.append(ActionPoint(action=action, is_keypoint=False))
+                
+        except Exception as e:
+            logging.exception(f"Ruckig segment {seg_idx} planning failed: {e}, using linear interpolation")
+            # 降级：线性插值
+            for j in range(segment_steps):
+                t_ratio = j / segment_steps if segment_steps > 0 else 0
+                interp_pos = (1 - t_ratio) * raw_actions[start_kp_idx, :dof] + t_ratio * raw_actions[end_kp_idx, :dof]
+                gripper_val = raw_actions[start_kp_idx + j, dof] if (start_kp_idx + j) < H else raw_actions[-1, dof]
+                action = np.concatenate([interp_pos, [gripper_val]])
+                result.append(ActionPoint(action=action, is_keypoint=(j == 0)))
+    
+    # 最后一个关键点
+    result.append(ActionPoint(action=raw_actions[-1].copy(), is_keypoint=True))
+    
+    logging.info(f"Offline Ruckig plan: {len(raw_actions)} raw -> {len(result)} planned, "
+                 f"{num_keypoints} keypoints, sample_rate={sample_rate}")
+    
+    return result
+
 def main():
     parser = argparse.ArgumentParser(description="Inference script for AgileX follower robot")
     parser.add_argument("--port", type=str, required=True, help="port name")
@@ -378,11 +638,21 @@ def main():
     parser.add_argument("--ruckig_max_vel", type=float, default=200000.0, help="Ruckig 最大关节速度 (Piper单位/s)，建议根据实际动作范围调整")
     parser.add_argument("--ruckig_max_acc", type=float, default=500000.0, help="Ruckig 最大关节加速度 (Piper单位/s²)")
     parser.add_argument("--ruckig_max_jerk", type=float, default=5000000.0, help="Ruckig 最大 Jerk (Piper单位/s³)")
+    # 离线 Ruckig 规划选项
+    parser.add_argument("--ruckig_offline", action="store_true", help="启用离线点到点 Ruckig 规划（与 ruckig_enable 互斥）")
+    parser.add_argument("--ruckig_sample_rate", type=int, default=10, help="关键点采样频率（每 N 个动作采 1 个关键点）")
+    # 离线样条插值规划选项
+    parser.add_argument("--spline_offline", action="store_true", help="启用离线三次样条插值规划（与 ruckig_enable/ruckig_offline 互斥）")
     # 日志路径
     parser.add_argument("--log_dir", type=str, default="/home/test/jemotor/dsrl_pi05/openpi/trajectory_plots/csv_data/", help="日志文件保存目录")
     args = parser.parse_args()
 
     set_seeds(args.seed)
+
+    # 互斥校验
+    modes_enabled = sum([args.ruckig_enable, args.ruckig_offline, args.spline_offline])
+    if modes_enabled > 1:
+        raise ValueError("--ruckig_enable, --ruckig_offline, --spline_offline 互斥，只能选其一")
 
     # 创建日志记录器
     import os
@@ -453,6 +723,8 @@ def main():
 
         # ==== Ruckig 平滑初始化 ====
         ruckig_enabled = args.ruckig_enable and RUCKIG_AVAILABLE
+        ruckig_offline_enabled = args.ruckig_offline and RUCKIG_AVAILABLE
+        spline_offline_enabled = args.spline_offline
         ruckig_instance = None
         ruckig_inp = None
         ruckig_out = None
@@ -506,7 +778,12 @@ def main():
                 anchor = None
                 if len(action_queue) > 0:
                     try:
-                        anchor = np.asarray(action_queue[0], dtype=float)
+                        first_item = action_queue[0]
+                        # 支持 ActionPoint 对象和普通 ndarray
+                        if hasattr(first_item, 'action'):
+                            anchor = np.asarray(first_item.action, dtype=float)
+                        else:
+                            anchor = np.asarray(first_item, dtype=float)
                     except Exception:
                         anchor = None
                 try:
@@ -528,8 +805,13 @@ def main():
                     # columns: timestamp, recv_idx, queue_len_before_merge
                     logger_merge_events.log(time.perf_counter(), recv_idx, len(action_queue))
 
-                # 1. 记录未执行的旧动作
-                old_actions = list(action_queue)
+                # 1. 记录未执行的旧动作（从 ActionPoint 中提取 action）
+                old_actions = []
+                for item in action_queue:
+                    if hasattr(item, 'action'):
+                        old_actions.append(item.action)
+                    else:
+                        old_actions.append(item)
                 action_queue.clear()
 
                 # 2. 新推理动作起点
@@ -605,12 +887,129 @@ def main():
                     smooth_actions = ema_transition(old_actions, new_actions, alpha=args.ema_alpha)
                 else:
                     raise ValueError(f"Unknown smooth_type: {args.smooth_type}")
-                for a in smooth_actions:
-                    action_queue.append(a)
+                
+                # ==== 离线 Ruckig 模式：对融合结果进行规划 ====
+                if ruckig_offline_enabled:
+                    # 将融合结果转为 ndarray
+                    smooth_arr = np.array([np.asarray(a) for a in smooth_actions], dtype=float)
+                    # 调用离线 Ruckig 规划
+                    planned_points = offline_ruckig_plan(
+                        smooth_arr,
+                        sample_rate=args.ruckig_sample_rate,
+                        dt=step_time,
+                        max_vel=args.ruckig_max_vel,
+                        max_acc=args.ruckig_max_acc,
+                        max_jerk=args.ruckig_max_jerk,
+                        dof=DOF,
+                    )
+                    for ap in planned_points:
+                        action_queue.append(ap)
+                    logging.info(f"Offline Ruckig: {len(smooth_actions)} merged -> {len(planned_points)} planned")
+                elif spline_offline_enabled:
+                    # ==== 离线样条插值模式：对融合结果进行规划 ====
+                    smooth_arr = np.array([np.asarray(a) for a in smooth_actions], dtype=float)
+                    planned_points = offline_spline_plan(
+                        smooth_arr,
+                        sample_rate=args.ruckig_sample_rate,
+                        dt=step_time,
+                        dof=DOF,
+                    )
+                    for ap in planned_points:
+                        action_queue.append(ap)
+                    logging.info(f"Offline Spline: {len(smooth_actions)} merged -> {len(planned_points)} planned")
+                else:
+                    # 普通模式：直接添加融合后的动作
+                    for a in smooth_actions:
+                        action_queue.append(a)
 
                 waiting_for_infer = False
             except mp.queues.Empty:
                 pass
+
+            # ==== 离线 Ruckig 模式：处理推理结果到来时的特殊逻辑 ====
+            # 当收到新推理结果且启用离线模式时，需要先执行到下一个关键点
+            if ruckig_offline_enabled and waiting_for_infer and len(action_queue) > 0:
+                # 检查 out_q 是否有结果（非阻塞查看，不取出）
+                pending_result = None
+                try:
+                    pending_result = out_q.get_nowait()
+                except mp.queues.Empty:
+                    pending_result = None
+                
+                if pending_result is not None:
+                    # 有新结果，需要执行到下一个关键点
+                    # 找到下一个关键点位置
+                    next_kp_offset = None
+                    for kp_i, ap in enumerate(action_queue):
+                        if hasattr(ap, 'is_keypoint') and ap.is_keypoint:
+                            next_kp_offset = kp_i
+                            break
+                    
+                    if next_kp_offset is not None and next_kp_offset > 0:
+                        # 执行到关键点（立即发送）
+                        logging.info(f"Offline Ruckig: executing {next_kp_offset} actions to reach keypoint")
+                        for _ in range(next_kp_offset):
+                            if len(action_queue) == 0:
+                                break
+                            ap = action_queue.popleft()
+                            action_to_send = ap.action if hasattr(ap, 'action') else ap
+                            if print_log:
+                                logger_action.log(time.perf_counter(), action_to_send[:7])
+                                log_robot_state(robot, logger_end_pose, logger_joint_state, logger_joint_vel)
+                            robot.send_action_np(action_to_send[:7])
+                            last_sent_action = action_to_send
+                            action_step_counter += 1
+                            # 注意：这里需要 sleep 以保持控制频率
+                            time.sleep(step_time)
+                    
+                    # 现在处理新推理结果
+                    idx, action_vals = pending_result
+                    recv_idx = idx
+                    logging.debug(f"got result #{recv_idx} (offline mode)")
+                    
+                    if print_log:
+                        logger_merge_events.log(time.perf_counter(), recv_idx, len(action_queue))
+                    
+                    # 提取剩余动作（从关键点开始）
+                    old_remaining = []
+                    for ap in action_queue:
+                        if hasattr(ap, 'action'):
+                            old_remaining.append(ap.action)
+                        else:
+                            old_remaining.append(ap)
+                    action_queue.clear()
+                    
+                    # 对齐新动作起点
+                    if args.align_mode == "step":
+                        start_idx = action_step_counter
+                    elif args.align_mode == "euclidean" and len(old_remaining) > 0 and len(action_vals) > 0:
+                        old_action = old_remaining[0]
+                        dists = np.linalg.norm(action_vals - old_action, axis=1)
+                        start_idx = int(np.argmin(dists))
+                    else:
+                        start_idx = 0
+                    new_actions = action_vals[start_idx:]
+                    
+                    # 融合
+                    merged = cubic_transition(old_remaining, new_actions)
+                    
+                    # 离线 Ruckig 规划
+                    merged_arr = np.array([np.asarray(a) for a in merged], dtype=float)
+                    planned_points = offline_ruckig_plan(
+                        merged_arr,
+                        sample_rate=args.ruckig_sample_rate,
+                        dt=step_time,
+                        max_vel=args.ruckig_max_vel,
+                        max_acc=args.ruckig_max_acc,
+                        max_jerk=args.ruckig_max_jerk,
+                        dof=DOF,
+                    )
+                    for ap in planned_points:
+                        action_queue.append(ap)
+                    
+                    waiting_for_infer = False
+                    action_step_counter = 0
+                    logging.info(f"Offline Ruckig merge: {len(old_remaining)} old + {len(new_actions)} new -> {len(planned_points)} planned")
 
             # 3. 如果 action_queue 有动作，发给 robot
             if action_queue:
@@ -731,9 +1130,24 @@ def main():
                         last_sent_action = action_to_send
                         action_step_counter += 1
                         ruckig_step_counter = (ruckig_step_counter + 1) % lookahead
+                elif ruckig_offline_enabled:
+                    # ==== 离线 Ruckig 模式：直接发送预规划的动作 ====
+                    ap = action_queue.popleft()
+                    action_to_send = ap.action if hasattr(ap, 'action') else ap
+                    if print_log:
+                        logger_action.log(time.perf_counter(), action_to_send[:7])
+                        log_robot_state(robot, logger_end_pose, logger_joint_state, logger_joint_vel)
+                    robot.send_action_np(action_to_send[:7])
+                    last_sent_action = action_to_send
+                    action_step_counter += 1
                 else:
                     # ==== 原始逻辑（无 Ruckig）====
-                    action_to_send = action_queue.popleft()
+                    action_item = action_queue.popleft()
+                    # 处理 ActionPoint 对象
+                    if hasattr(action_item, 'action'):
+                        action_to_send = action_item.action
+                    else:
+                        action_to_send = action_item
                     if print_log:
                         logger_action.log(time.perf_counter(), action_to_send[:7])
                         log_robot_state(robot, logger_end_pose, logger_joint_state, logger_joint_vel)
