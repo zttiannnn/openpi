@@ -18,7 +18,6 @@ import openpi.models.model as _model
 import openpi.models.pi0_config as pi0_config
 import openpi.models.pi0_fast as pi0_fast
 import openpi.models.tokenizer as _tokenizer
-import openpi.policies.agileX_policy as agileX_policy
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
@@ -97,10 +96,6 @@ class DataConfig:
     action_space: droid_rlds_dataset.DroidActionSpace | None = None
     # Path to the data filter file for DROID dataset
     filter_dict_path: str | None = None
-    # my edit
-    root: str | None = None
-
-    use_images: bool  = True
 
 
 class GroupFactory(Protocol):
@@ -176,16 +171,14 @@ class DataConfigFactory(abc.ABC):
     assets: AssetsConfig = dataclasses.field(default_factory=AssetsConfig)
     # Base config that will be updated by the factory.
     base_config: tyro.conf.Suppress[DataConfig | None] = None
-    # use speed mode
-    use_speed: bool = False
 
     @abc.abstractmethod
-    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig, use_images = True) -> DataConfig:
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
         """Create a data config."""
 
     def create_base_config(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
         repo_id = self.repo_id if self.repo_id is not tyro.MISSING else None
-        asset_id = "openpi_stats/"  # self.assets.asset_id or repo_id
+        asset_id = self.assets.asset_id or repo_id
         return dataclasses.replace(
             self.base_config or DataConfig(),
             repo_id=repo_id,
@@ -286,235 +279,6 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
 
 
 @dataclasses.dataclass(frozen=True)
-class LeRobotAgileXDataConfigOld(DataConfigFactory):
-    # If true, will convert joint dimensions to deltas with respect to the current state before passing to the model.
-    # Gripper dimensions will remain in absolute values.
-    use_delta_joint_actions: bool = True
-    # If provided, will be injected into the input data if the "prompt" key is not present.
-    default_prompt: str | None = None
-    # If true, this will convert the joint and gripper values from the standard Aloha space to
-    # the space used by the pi internal runtime which was used to train the base model. People who
-    # use standard Aloha data should set this to true.
-    adapt_to_pi: bool = True
-
-    # Repack transforms.
-    repack_transforms: tyro.conf.Suppress[_transforms.Group] = dataclasses.field(
-        default=_transforms.Group(
-            inputs=[
-                _transforms.RepackTransform(
-                    {
-                        "images": {"camera0": "observation.images.camera0",
-                                   "camera1": "observation.images.camera1",
-                                   "camera2": "observation.images.camera2"},
-                        "state": "observation.state",
-                        "actions": "action",
-                    }
-                )
-            ]
-        )
-    )
-    # Action keys that will be used to read the action sequence from the dataset.
-    action_sequence_keys: Sequence[str] = ("action",)
-
-@dataclasses.dataclass(frozen=True)
-class LeRobotAgileXDataConfig(DataConfigFactory):
-    # If true, will convert joint dimensions to deltas with respect to the current state before passing to the model.
-    # Gripper dimensions will remain in absolute values.
-    use_delta_joint_actions: bool = True
-    # If provided, will be injected into the input data if the "prompt" key is not present.
-    default_prompt: str | None = None
-    # If true, this will convert the joint and gripper values from the standard Aloha space to
-    # the space used by the pi internal runtime which was used to train the base model. People who
-    # use standard Aloha data should set this to true.
-    adapt_to_pi: bool = True
-    # use speed mode
-    use_speed: bool = False
-
-    load_images: bool = True  # 改为 True，启用图像加载
-
-    # Repack transforms.
-    repack_transforms: tyro.conf.Suppress[_transforms.Group] = dataclasses.field(
-        default=_transforms.Group(
-            inputs=[
-                _transforms.RepackTransform(
-                    {
-                        "images": {"camera0": "camera0",
-                                   "camera1": "camera1",
-                                   "camera2": "camera2",
-                                   "camera3": "camera3"},
-                        "state": "observation.state",
-                        "actions": "action",
-                    }
-                )
-            ]
-        )
-    )
-    # Action keys that will be used to read the action sequence from the dataset.
-    action_sequence_keys: Sequence[str] = ("action",)
-
-    @override
-    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig, use_images = load_images) -> DataConfig:
-        data_transforms = _transforms.Group(
-            inputs=[agileX_policy.AgileXInputs(action_dim=model_config.action_dim, adapt_to_pi=self.adapt_to_pi,
-                                               use_images=use_images)],
-            outputs=[agileX_policy.AgileXOutputs(adapt_to_pi=self.adapt_to_pi)],
-        )
-        if self.use_delta_joint_actions:
-            delta_action_mask = _transforms.make_bool_mask(6, -1)
-            data_transforms = data_transforms.push(
-                inputs=[_transforms.DeltaActions(delta_action_mask)],
-                outputs=[_transforms.AbsoluteActions(delta_action_mask)],
-            )
-
-        model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
-
-        return dataclasses.replace(
-            self.create_base_config(assets_dirs, model_config),
-            repack_transforms=self.repack_transforms,
-            data_transforms=data_transforms,
-            model_transforms=model_transforms,
-            action_sequence_keys=self.action_sequence_keys,
-            repo_id="lerobot/test",
-            root="/jedata/test_1125_test",
-        )
-    
-@dataclasses.dataclass(frozen=True)
-class LeRobotAgileXDataConfigDepth(DataConfigFactory):
-    # If true, will convert joint dimensions to deltas with respect to the current state before passing to the model.
-    # Gripper dimensions will remain in absolute values.
-    use_delta_joint_actions: bool = True
-    # If provided, will be injected into the input data if the "prompt" key is not present.
-    default_prompt: str | None = None
-    # If true, this will convert the joint and gripper values from the standard Aloha space to
-    # the space used by the pi internal runtime which was used to train the base model. People who
-    # use standard Aloha data should set this to true.
-    adapt_to_pi: bool = True
-
-    load_images: bool = True
-
-    use_depth: bool = True
-
-
-    # Repack transforms.
-    repack_transforms: tyro.conf.Suppress[_transforms.Group] = dataclasses.field(
-        default=_transforms.Group(
-            inputs=[
-                _transforms.RepackTransform(
-                    {
-                        "images": {"camera0": "camera0",
-                                   "camera1": "camera1",
-                                   "camera2": "camera2",
-                                   "camera3": "camera3",
-                                   "camera0_depth": "observation.images.camera0_depth",
-                                   "camera3_depth": "observation.images.camera3_depth",
-                                   },
-                        "state": "observation.state",
-                        "actions": "action",
-                    }
-                )
-            ]
-        )
-    )
-    # Action keys that will be used to read the action sequence from the dataset.
-    action_sequence_keys: Sequence[str] = ("action",)
-
-    @override
-    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig, use_images = load_images, use_depth = use_depth) -> DataConfig:
-        data_transforms = _transforms.Group(
-            inputs=[agileX_policy.AgileXInputs(action_dim=model_config.action_dim, adapt_to_pi=self.adapt_to_pi,
-                                               use_images=use_images,use_depth=use_depth)],
-            outputs=[agileX_policy.AgileXOutputs(adapt_to_pi=self.adapt_to_pi)],
-        )
-        if self.use_delta_joint_actions:
-            delta_action_mask = _transforms.make_bool_mask(6, -1)
-            data_transforms = data_transforms.push(
-                inputs=[_transforms.DeltaActions(delta_action_mask)],
-                outputs=[_transforms.AbsoluteActions(delta_action_mask)],
-            )
-
-        model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
-
-        return dataclasses.replace(
-            self.create_base_config(assets_dirs, model_config),
-            repack_transforms=self.repack_transforms,
-            data_transforms=data_transforms,
-            model_transforms=model_transforms,
-            action_sequence_keys=self.action_sequence_keys,
-            repo_id="lerobot/test",
-            root="/home/test/jemotor/jedata/test_1112_trans/",
-            use_images = use_images,
-        )
-
-@dataclasses.dataclass(frozen=True)
-class LeRobotAgileXDataConfigNewForm(DataConfigFactory):
-    # If true, will convert joint dimensions to deltas with respect to the current state before passing to the model.
-    # Gripper dimensions will remain in absolute values.
-    use_delta_joint_actions: bool = True
-    # If provided, will be injected into the input data if the "prompt" key is not present.
-    default_prompt: str | None = None
-    # If true, this will convert the joint and gripper values from the standard Aloha space to
-    # the space used by the pi internal runtime which was used to train the base model. People who
-    # use standard Aloha data should set this to true.
-    adapt_to_pi: bool = True
-
-    load_images: bool = True
-
-    use_depth: bool = True
-
-
-    # Repack transforms.
-    repack_transforms: tyro.conf.Suppress[_transforms.Group] = dataclasses.field(
-        default=_transforms.Group(
-            inputs=[
-                _transforms.RepackTransform(
-                    {
-                        "images": {"camera0": "camera_01_color_image_raw",
-                                   "camera1": "camera_02_color_image_raw",
-                                   "camera2": "camera_03_color_image_raw",
-                                   "camera3": "camera_04_color_image_raw",
-                                   "camera4": "camera_05_color_image_raw",
-                                   "camera0_depth": "camera_01_depth_image_raw",
-                                   "camera2_depth": "camera_03_depth_image_raw",
-                                   "camera3_depth": "camera_04_depth_image_raw",
-                                   },
-                        "state": "observation.state",
-                        "actions": "action",
-                    }
-                )
-            ]
-        )
-    )
-    # Action keys that will be used to read the action sequence from the dataset.
-    action_sequence_keys: Sequence[str] = ("action",)
-
-    @override
-    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig, use_images = load_images, use_depth = use_depth) -> DataConfig:
-        data_transforms = _transforms.Group(
-            inputs=[agileX_policy.AgileXInputs(action_dim=model_config.action_dim, adapt_to_pi=self.adapt_to_pi,
-                                               use_images=use_images,use_depth=use_depth)],
-            outputs=[agileX_policy.AgileXOutputs(adapt_to_pi=self.adapt_to_pi)],
-        )
-        if self.use_delta_joint_actions:
-            delta_action_mask = _transforms.make_bool_mask(6, -1, 6, -1)
-            data_transforms = data_transforms.push(
-                inputs=[_transforms.DeltaActions(delta_action_mask)],
-                outputs=[_transforms.AbsoluteActions(delta_action_mask)],
-            )
-
-        model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
-
-        return dataclasses.replace(
-            self.create_base_config(assets_dirs, model_config),
-            repack_transforms=self.repack_transforms,
-            data_transforms=data_transforms,
-            model_transforms=model_transforms,
-            action_sequence_keys=self.action_sequence_keys,
-            repo_id="lerobot/test",
-            root="/jedata/test_1105",
-            use_images = use_images,
-        )
-
-@dataclasses.dataclass(frozen=True)
 class LeRobotLiberoDataConfig(DataConfigFactory):
     """
     This config is used to configure transforms that are applied at various parts of the data pipeline.
@@ -589,7 +353,6 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
             data_transforms=data_transforms,
             model_transforms=model_transforms,
         )
-        
 
 
 @dataclasses.dataclass(frozen=True)
@@ -716,7 +479,6 @@ class TrainConfig:
 
     lr_schedule: _optimizer.LRScheduleConfig = dataclasses.field(default_factory=_optimizer.CosineDecaySchedule)
     optimizer: _optimizer.OptimizerConfig = dataclasses.field(default_factory=_optimizer.AdamW)
-    # optimizer: _optimizer.OptimizerConfig = dataclasses.field(default_factory=_optimizer.SGD)
     ema_decay: float | None = 0.99
 
     # Specifies which weights should be frozen.
@@ -726,7 +488,7 @@ class TrainConfig:
     data: DataConfigFactory = dataclasses.field(default_factory=FakeDataConfig)
 
     # Base directory for config assets (e.g., norm stats).
-    assets_base_dir: str = ""#"./assets"
+    assets_base_dir: str = "./assets"
     # Base directory for checkpoints.
     checkpoint_base_dir: str = "./checkpoints"
 
@@ -784,6 +546,7 @@ class TrainConfig:
     def __post_init__(self) -> None:
         if self.resume and self.overwrite:
             raise ValueError("Cannot resume and overwrite at the same time.")
+
 @dataclasses.dataclass(frozen=True)
 class LeRobotSAMDataConfig(DataConfigFactory):
     @override
@@ -826,235 +589,6 @@ class LeRobotSAMDataConfig(DataConfigFactory):
 
 # Use `get_config` if you need to get a config by name in your code.
 _CONFIGS = [
-    #
-    # Finetune AgileX configs.
-    #
-    # pi0.5
-    TrainConfig(
-        name="pi05_agileX_new_form",
-        model=pi0_config.Pi0Config(paligemma_variant="gemma_2b",
-                                   action_expert_variant="gemma_300m",
-                                   action_dim=14,
-                                   action_horizon=50,
-                                   max_token_len=128,
-                                   pi05=True),
-        freeze_filter=pi0_config.Pi0Config(paligemma_variant="gemma_2b",
-                                           action_expert_variant="gemma_300m",
-                                           action_dim=14,
-                                           action_horizon=50,
-                                           max_token_len=128,
-                                           pi05=True).get_freeze_filter(),
-        weight_loader=weight_loaders.CheckpointWeightLoader("/jedata/pi0_base/pi05_base/params"),
-        data=LeRobotAgileXDataConfigNewForm(
-            assets=AssetsConfig(assets_dir="/jedata/test_1105"),
-            default_prompt="Pick up the PCB board from the green conveyor belt and place it into the yellow container."
-        ),
-        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0, 0, 0, -1.5, 1.5, 0, 0, 0, 0]},
-        wandb_enabled=False,
-        lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=1_000,
-            peak_lr=1e-4,
-            decay_steps=3_000,
-            decay_lr=1e-5,
-        ),
-        num_train_steps=1_000_000,
-        batch_size=512,
-        log_interval=100,
-        save_interval=2_500,
-        keep_period=5_000,
-        num_workers=8,
-        fsdp_devices=8,
-    ),
-    TrainConfig(
-        name="pi05_agileX_depth",
-        model=pi0_config.Pi0Config(paligemma_variant="gemma_2b",
-                                   action_expert_variant="gemma_300m",
-                                   action_dim=7,
-                                   action_horizon=50,
-                                   max_token_len=128,
-                                   pi05=True),
-        freeze_filter=pi0_config.Pi0Config(paligemma_variant="gemma_2b",
-                                           action_expert_variant="gemma_300m",
-                                           action_dim=7,
-                                           action_horizon=50,
-                                           max_token_len=128,
-                                           pi05=True).get_freeze_filter(),
-        weight_loader=weight_loaders.CheckpointWeightLoader("/home/test/jemotor/jesource/pi05_base/params"),
-        data=LeRobotAgileXDataConfigDepth(
-            assets=AssetsConfig(assets_dir="/home/test/jemotor/jedata/test_0928_100_v2_replaced/"),
-            default_prompt="Pick up the PCB board from the green conveyor belt and place it into the yellow container."
-        ),
-        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
-        wandb_enabled=False,
-        lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=1_000,
-            peak_lr=1e-4,
-            decay_steps=3_000,
-            decay_lr=1e-5,
-        ),
-        num_train_steps=1_000_000,
-        batch_size=512,
-        log_interval=100,
-        save_interval=2_500,
-        keep_period=5_000,
-        num_workers=8,
-        fsdp_devices=8,
-    ),
-    #pi0.5
-    TrainConfig(
-        name="pi05_agileX_speed",
-        # model = pi0_fast.Pi0FASTConfig(
-        #     action_dim=7,  # 6 joints + 1 gripper actions
-        #     action_horizon=25,
-        #     max_token_len=64,
-        # ),
-        model=pi0_config.Pi0Config(paligemma_variant="gemma_2b", 
-                            action_expert_variant="gemma_300m",
-                            action_dim=7,
-                            action_horizon=50,
-                            max_token_len=128,
-                            pi05=True),
-        freeze_filter=pi0_config.Pi0Config(paligemma_variant="gemma_2b",
-                            action_expert_variant="gemma_300m",
-                            action_dim=7,
-                            action_horizon=50,
-                            max_token_len=128,
-                            pi05=True).get_freeze_filter(),
-        weight_loader=weight_loaders.CheckpointWeightLoader("/home/test/jemotor/jesource/pi05_base/params"),
-        data=LeRobotAgileXDataConfig(
-            assets=AssetsConfig(assets_dir="/home/test/jemotor/jedata/test_0928_100_v2_replaced/"),
-            default_prompt="Pick up the PCB board from the green conveyor belt and place it into the yellow container.",
-            use_speed=True,
-        ),
-        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
-        wandb_enabled=False,
-        lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=1_000,
-            peak_lr=1e-4,
-            decay_steps=3_000,
-            decay_lr=1e-5,
-        ),
-        num_train_steps=1_000_000,
-        batch_size=512,
-        log_interval=100,
-        save_interval=2_500,
-        keep_period=5_000,
-        num_workers=8,
-        fsdp_devices=8,
-    ),     
-    #pi0.5
-    TrainConfig(
-        name="pi05_agileX",
-        # model = pi0_fast.Pi0FASTConfig(
-        #     action_dim=7,  # 6 joints + 1 gripper actions
-        #     action_horizon=25,
-        #     max_token_len=64,
-        # ),
-        model=pi0_config.Pi0Config(paligemma_variant="gemma_2b", 
-                            action_expert_variant="gemma_300m",
-                            action_dim=7,
-                            action_horizon=50,
-                            max_token_len=128,
-                            pi05=True),
-        freeze_filter=pi0_config.Pi0Config(paligemma_variant="gemma_2b",
-                            action_expert_variant="gemma_300m",
-                            action_dim=7,
-                            action_horizon=50,
-                            max_token_len=128,
-                            pi05=True).get_freeze_filter(),
-        weight_loader=weight_loaders.CheckpointWeightLoader("/jedata/pi0_base/pi05_base/params"),
-        data=LeRobotAgileXDataConfig(
-            assets=AssetsConfig(assets_dir="/home/test/jemotor/jedata/test_1112_trans/"),
-            default_prompt="Pick up the PCB board from the green conveyor belt and place it into the yellow container.",
-        ),
-        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
-        wandb_enabled=False,
-        lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=1_000,
-            peak_lr=1e-4,
-            decay_steps=3_000,
-            decay_lr=1e-5,
-        ),
-        num_train_steps=1_000_000,
-        batch_size=512,
-        log_interval=100,
-        save_interval=2_500,
-        keep_period=5_000,
-        num_workers=8,
-        fsdp_devices=8,
-    ),     
-    #pi0
-    TrainConfig(
-        name="pi0_agileX",
-        # model = pi0_fast.Pi0FASTConfig(
-        #     action_dim=7,  # 6 joints + 1 gripper actions
-        #     action_horizon=25,
-        #     max_token_len=64,
-        # ),
-        model=pi0_config.Pi0Config(paligemma_variant="gemma_2b", 
-                            action_expert_variant="gemma_300m",
-                            action_dim=7,
-                            action_horizon=50,
-                            max_token_len=48),
-        freeze_filter=pi0_config.Pi0Config(paligemma_variant="gemma_2b", 
-                            action_expert_variant="gemma_300m",
-                            action_dim=7,
-                            action_horizon=50,
-                            max_token_len=48).get_freeze_filter(),
-        weight_loader=weight_loaders.CheckpointWeightLoader("/home/test/jemotor/jesource/pi0_base/pi0_base"),
-        data=LeRobotAgileXDataConfig(
-            assets=AssetsConfig(assets_dir="/home/test/jemotor/jedata/test_0928/"),
-            default_prompt="Pick up the PCB board on the round yellow base and place it into the circular recess of the yellow square container"
-        ),
-        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
-        wandb_enabled=False,
-        lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=1_000,
-            peak_lr=1e-4,
-            decay_steps=3_000,
-            decay_lr=1e-5,
-        ),
-        num_train_steps=60_000,
-        batch_size=512,
-        log_interval=100,
-        save_interval=2_500,
-        keep_period=2_500,
-        num_workers=4,
-        fsdp_devices=8,
-    ), 
-    #pi0_fast 
-    TrainConfig(
-        name="pi0_fast_agileX",
-        model = pi0_fast.Pi0FASTConfig(
-            paligemma_variant="gemma_2b_lora",
-            action_dim=7,  # 6 joints + 1 gripper actions
-            action_horizon=25,
-            max_token_len=128,
-        ),
-        freeze_filter=pi0_fast.Pi0FASTConfig(
-            paligemma_variant="gemma_2b_lora", 
-            action_dim=7,
-            action_horizon=25,
-            max_token_len=128,
-        ).get_freeze_filter(),
-        weight_loader=weight_loaders.CheckpointWeightLoader("/home/agx/lerobot_model/pi0_fast/pi0_fast_base/params"),
-        data=LeRobotAgileXDataConfig(
-            assets=AssetsConfig(assets_dir="/home/agx/jedata/test_0711a"),
-            default_prompt="pick up the circular chip and place it on the yellow pot"
-        ),
-        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
-        wandb_enabled=False,
-        num_train_steps=400_000,
-        batch_size=512,
-        log_interval=100,
-        save_interval=5000,
-        keep_period=20_000,
-        num_workers=8,
-        fsdp_devices=8,
-    ),    
-    #
-    # Inference Aloha configs.
-    #
     TrainConfig(
         name="cables10c2",
         model=pi0_config.Pi0Config(action_horizon=16),
@@ -1199,6 +733,7 @@ _CONFIGS = [
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
         num_train_steps=30_000,
     ),
+
     TrainConfig(
         name="pi0_aloha",
         model=pi0_config.Pi0Config(),
