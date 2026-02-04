@@ -391,6 +391,7 @@ def offline_spline_plan(
     dt: float,
     dof: int = 6,
     start_velocity: np.ndarray = None,
+    return_splines: bool = False,
 ) -> list:
     """
     离线三次样条插值规划。
@@ -404,9 +405,12 @@ def offline_spline_plan(
         dt: 控制周期
         dof: 关节自由度（不含 gripper）
         start_velocity: 起点速度 (dof,)，用于 clamped 边界条件
+        return_splines: 是否返回 splines 对象和总时间，用于后续解析导数计算
     
     Returns:
-        List[ActionPoint]，规划后的动作序列
+        return_splines=False: List[ActionPoint]，规划后的动作序列
+        return_splines=True: Tuple[List[ActionPoint], List[CubicSpline], float]，
+                             (规划动作序列, 各关节 spline 对象, 总时间)
     """
     from scipy.interpolate import CubicSpline
     
@@ -472,6 +476,8 @@ def offline_spline_plan(
     logging.info(f"Offline Spline plan: {H} raw -> {len(result)} planned, "
                  f"{num_keypoints} keypoints, sample_rate={sample_rate}")
     
+    if return_splines:
+        return result, splines, total_time
     return result
 
 
@@ -744,6 +750,10 @@ def main():
         ruckig_step_counter = 0  # 稀疏采样计数器
         last_sent_action = None  # 用于降级时保持静止
         prev_sent_action = None  # 上一个发送的动作，用于计算速度
+        # 样条解析导数相关变量
+        last_splines = None  # 上一段 spline 对象列表
+        last_spline_total_time = None  # 上一段 spline 的总时间
+        spline_exec_time = 0.0  # 当前 spline 段已执行的时间
         DOF = 6  # 关节数，不含 gripper
 
         if ruckig_enabled:
@@ -923,12 +933,33 @@ def main():
                     # 不使用 cubic_transition，直接用 spline 的 clamped 边界条件实现平滑衔接
                     
                     # 计算当前速度（用于 clamped 边界条件）
-                    if last_sent_action is not None and prev_sent_action is not None:
+                    # 优先使用样条解析导数（更精确），降级到位置差分估计
+                    current_pos = None
+                    current_vel = None
+                    
+                    if last_sent_action is not None:
                         current_pos = np.asarray(last_sent_action[:DOF], dtype=float)
-                        current_vel = (current_pos - np.asarray(prev_sent_action[:DOF], dtype=float)) / step_time
-                    else:
-                        current_pos = None
-                        current_vel = None
+                        
+                        # 方法1：样条解析导数（精确）
+                        if last_splines is not None and last_spline_total_time is not None:
+                            try:
+                                # 计算当前执行时间点在 spline 中的位置
+                                # spline_exec_time 记录了从上一段 spline 开始已执行的时间
+                                eval_time = min(spline_exec_time, last_spline_total_time)
+                                # 从各关节的 spline 解析导数获取速度
+                                current_vel = np.array([
+                                    last_splines[j](eval_time, 1)  # 一阶导数 = 速度
+                                    for j in range(DOF)
+                                ])
+                                logging.debug(f"Spline derivative velocity at t={eval_time:.4f}: {current_vel}")
+                            except Exception as e:
+                                logging.warning(f"Spline derivative failed, falling back to difference: {e}")
+                                current_vel = None
+                        
+                        # 方法2：位置差分估计（降级方案）
+                        if current_vel is None and prev_sent_action is not None:
+                            current_vel = (current_pos - np.asarray(prev_sent_action[:DOF], dtype=float)) / step_time
+                            logging.debug(f"Position difference velocity: {current_vel}")
                     
                     # 构建对齐后的动作序列：用 current_pos 替代 new_actions[start_idx]
                     if current_pos is not None and start_idx < len(new_actions):
@@ -949,14 +980,17 @@ def main():
                         aligned_actions = new_actions
                         current_vel = None
                     
-                    # 调用样条拟合（使用 clamped 边界条件）
-                    planned_points = offline_spline_plan(
+                    # 调用样条拟合（使用 clamped 边界条件，返回 splines 以供下次解析导数使用）
+                    planned_points, last_splines, last_spline_total_time = offline_spline_plan(
                         aligned_actions,
                         sample_rate=args.ruckig_sample_rate,
                         dt=step_time,
                         dof=DOF,
                         start_velocity=current_vel,
+                        return_splines=True,
                     )
+                    # 重置 spline 执行时间计数器
+                    spline_exec_time = 0.0
                     
                     # 跳过第一个点（它等于 current_pos，避免重复）
                     skip_first = current_pos is not None and len(planned_points) > 1
@@ -965,7 +999,7 @@ def main():
                             continue
                         action_queue.append(ap)
                     
-                    logging.info(f"Offline Spline (direct merge): {len(new_actions)} raw -> {len(aligned_actions)} aligned -> {len(planned_points)} planned, skip_first={skip_first}")
+                    logging.info(f"Offline Spline (direct merge): {len(new_actions)} raw -> {len(aligned_actions)} aligned -> {len(planned_points)} planned, skip_first={skip_first}, vel_from_spline={last_splines is not None}")
                 else:
                     # 普通模式：直接添加融合后的动作
                     for a in smooth_actions:
@@ -1191,6 +1225,19 @@ def main():
                     prev_sent_action = last_sent_action
                     last_sent_action = action_to_send
                     action_step_counter += 1
+                elif spline_offline_enabled:
+                    # ==== 离线样条插值模式：直接发送预规划的动作，并更新执行时间 ====
+                    ap = action_queue.popleft()
+                    action_to_send = ap.action if hasattr(ap, 'action') else ap
+                    if print_log:
+                        logger_action.log(time.perf_counter(), action_to_send[:7])
+                        log_robot_state(robot, logger_end_pose, logger_joint_state, logger_joint_vel)
+                    robot.send_action_np(action_to_send[:7])
+                    prev_sent_action = last_sent_action
+                    last_sent_action = action_to_send
+                    action_step_counter += 1
+                    # 更新 spline 执行时间（用于下次 merge 时的解析导数计算）
+                    spline_exec_time += step_time
                 else:
                     # ==== 原始逻辑（无 Ruckig）====
                     action_item = action_queue.popleft()
