@@ -11,6 +11,7 @@ from openpi.models import model as _model
 from openpi.models import pi0_config
 import openpi.models.gemma as _gemma
 import openpi.models.siglip as _siglip
+from openpi.models.rtc_utils import RTCConfig, get_prefix_weights
 from openpi.shared import array_typing as at
 
 logger = logging.getLogger("openpi")
@@ -222,6 +223,10 @@ class Pi0(_model.BaseModel):
         *,
         num_steps: int | at.Int[at.Array, ""] = 10,
         noise: at.Float[at.Array, "b ah ad"] | None = None,
+        # RTC arguments
+        rtc_config: RTCConfig | None = None,
+        prev_actions: at.Float[at.Array, "b ah ad"] | None = None,
+        inference_delay: int | at.Int[at.Array, ""] = 0,
     ) -> _model.Actions:
         observation = _model.preprocess_observation(None, observation, train=False)
         # note that we use the convention more common in diffusion literature, where t=1 is noise and t=0 is the target
@@ -230,6 +235,55 @@ class Pi0(_model.BaseModel):
         batch_size = observation.state.shape[0]
         if noise is None:
             noise = jax.random.normal(rng, (batch_size, self.action_horizon, self.action_dim))
+
+        # Pre-compute RTC weights if enabled
+        rtc_weights = None
+        rtc_max_weight = None
+        rtc_sigma_d = 1.0
+        
+        if rtc_config is not None and rtc_config.enabled and prev_actions is not None:
+            # Calculate weights (B, H, 1) or (H, 1)
+            # Use inference_delay. 
+            # Note: inference_delay could be a tracer or concrete int.
+            # We assume it matches the batch structure or is scalar.
+            # If inference_delay is per-batch, we might need vmap or careful broadcasting.
+            # For now, assuming scalar or broadcastable.
+            
+            def _compute_weights(delay):
+                w = get_prefix_weights(
+                    delay, 
+                    rtc_config.execution_horizon, 
+                    self.action_horizon, 
+                    rtc_config.prefix_attention_schedule
+                )
+                return w
+            
+            # If inference_delay is an array (B,), we might need to map. 
+            # But get_prefix_weights implementation might not support batched start directly without vmap.
+            # Let's assume inference_delay is scalar (int) as in current inference script.
+            # Or if it is an array, we vmap it.
+            
+            # For safety, let's use jnp.array(inference_delay) and check ndim? 
+            # In JAX tracing we can't check value, but we can check shape.
+            
+            # Simplified: assume scalar delay for now or JAX handles broadcast in comparison?
+            # get_prefix_weights uses jnp.minimum(start, end) etc.
+            # If start is (B,), min is (B,), result w is (B, H).
+            # So it should support batched delay automatically if implemented with JAX ops!
+            
+            w = _compute_weights(inference_delay)
+            # Ensure shape (B, H, 1) or (1, H, 1) for broadcasting against (B, H, D)
+            if w.ndim == 1:
+                w = w[None, :, None] # (1, H, 1)
+            elif w.ndim == 2:
+                w = w[:, :, None] # (B, H, 1)
+                
+            rtc_weights = w
+            
+            rtc_max_weight = rtc_config.max_guidance_weight
+            if rtc_max_weight is None:
+                rtc_max_weight = float(num_steps)
+            rtc_sigma_d = rtc_config.sigma_d
 
         # first fill KV cache with a forward pass of the prefix
         prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
@@ -267,7 +321,61 @@ class Pi0(_model.BaseModel):
                 adarms_cond=[None, adarms_cond],
             )
             assert prefix_out is None
+            assert prefix_out is None
             v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
+
+            # Apply RTC Guidance
+            if rtc_weights is not None:
+                # Full Trajectory Alignment (Gradient-Free)
+                # x1_t = x_t - time * v_t  (time is t, here 1->0)
+                # Note: time arg in step is array (B,), need broadcast for v_t? v_t is (B,H,D). time is (B,).
+                # x_t is (B,H,D).
+                
+                # Expand time for broadcasting
+                # time is (B,) inside step?
+                # Inside step(carry): x_t, time = carry. 
+                # time is initialized as 1.0 (float).
+                # But jax.lax.while_loop passes carry around. 
+                # If init is (noise, 1.0), time stays scalar float? 
+                # Wait, step adds dt (float). So time is scalar float unless broadcasted?
+                # Ah, embed_suffix calls jnp.broadcast_to(time, batch_size).
+                # So `time` is scalar in carry.
+                
+                t_scalar = time
+                
+                # x1_t: Predicted x0
+                x1_t = x_t - t_scalar * v_t
+                
+                # Invert time for RTC math (tau: 0->1)
+                tau = 1.0 - t_scalar
+                
+                # Error
+                # prev_actions might need broadcasting if it's not (B,H,D) but it is.
+                err = (prev_actions - x1_t) * rtc_weights
+                
+                # Guidance Weight
+                # inv_r2 = ( (1-tau)^2 + tau^2 * sigma^2 ) / ( (1-tau)^2 * sigma^2 )
+                # c = (1-tau) / tau
+                # w = c * inv_r2
+                
+                # Robustness for limits
+                sigma2 = rtc_sigma_d ** 2
+                one_minus_tau = 1.0 - tau
+                sq_one_minus_tau = one_minus_tau ** 2
+                
+                numerator = sq_one_minus_tau + (tau ** 2) * sigma2
+                denominator = sq_one_minus_tau * sigma2 + 1e-6 # Avoid div zero
+                inv_r2 = numerator / denominator
+                
+                c = one_minus_tau / (tau + 1e-6)
+                
+                raw_weight = c * inv_r2
+                
+                # Clamp weight
+                guidance_w = jnp.minimum(raw_weight, rtc_max_weight)
+                
+                # Correction
+                v_t = v_t - guidance_w * err
 
             return x_t + dt * v_t, time + dt
 

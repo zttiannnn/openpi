@@ -15,6 +15,7 @@ from scripts.numpy_logger import NumpyCSVLogger
 
 from openpi.policies import policy_config as _policy_config
 from openpi.models.tokenizer import PaligemmaTokenizer
+from openpi.models.rtc_utils import RTCConfig, RTCAttentionSchedule
 from openpi.training import config as _config
 from third_party.agilex.agilexfollower import AlohaAgileXFollower
 from third_party.agilex.agilexconfig import AlohaAgileXFollowerConfig
@@ -74,15 +75,28 @@ def inference_worker(
             break
         # item expected to be (idx, obs, anchor) where anchor may be None
         if isinstance(item, tuple) and len(item) == 3:
+            # Legacy or rtc_context is None
             idx, obs, anchor = item
+            rtc_context = None
+        elif isinstance(item, tuple) and len(item) == 4:
+            # With RTC context
+            idx, obs, anchor, rtc_context = item
         elif isinstance(item, tuple) and len(item) == 2:
             idx, obs = item
             anchor = None
+            rtc_context = None
         else:
             # unexpected message, skip
             continue
         start_time = time.time()
-        result = policy.infer(obs)
+        
+        # Unpack RTC context
+        infer_kwargs = {}
+        if rtc_context:
+            # rtc_context = {'rtc_config': cfg, 'prev_actions': arr, 'inference_delay': int}
+            infer_kwargs.update(rtc_context)
+            
+        result = policy.infer(obs, **infer_kwargs)
         infer_time = time.time() - start_time
         print(f"Step {idx}: infer time = {infer_time:.4f} seconds")
         actions = result.get("actions")
@@ -663,6 +677,13 @@ def main():
     parser.add_argument("--spline_offline", action="store_true", help="启用离线三次样条插值规划（与 ruckig_enable/ruckig_offline 互斥）")
     # 日志路径
     parser.add_argument("--log_dir", type=str, default="/home/test/jemotor/dsrl_pi05/openpi/trajectory_plots/csv_data/", help="日志文件保存目录")
+    
+    # RTC Arguments
+    parser.add_argument("--rtc_enable", action="store_true", help="Enable Real-Time Chunking (RTC)")
+    parser.add_argument("--rtc_execution_horizon", type=int, default=10, help="RTC Execution Horizon")
+    parser.add_argument("--rtc_max_guidance_weight", type=float, default=None, help="RTC Max Guidance Weight (None=num_steps)")
+    parser.add_argument("--rtc_sigma_d", type=float, default=1.0, help="RTC Sigma D")
+
     args = parser.parse_args()
 
     set_seeds(args.seed)
@@ -754,6 +775,29 @@ def main():
         last_splines = None  # 上一段 spline 对象列表
         last_spline_total_time = None  # 上一段 spline 的总时间
         spline_exec_time = 0.0  # 当前 spline 段已执行的时间
+        
+        # RTC State
+        rtc_enabled = args.rtc_enable
+        last_action_vals = None # Store the raw action output from previous inference for RTC
+        rtc_config = None
+        if rtc_enabled:
+            rtc_config = RTCConfig(
+                enabled=True,
+                prefix_attention_schedule=RTCAttentionSchedule.LINEAR, # Hardcoded linear for now or add arg
+                max_guidance_weight=args.rtc_max_guidance_weight,
+                execution_horizon=args.rtc_execution_horizon,
+                sigma_d=args.rtc_sigma_d,
+                full_trajectory_alignment=True,
+            )
+            logging.info(f"RTC Enabled: {rtc_config}")
+            # Force disable other smoothing if RTC is on (optional, but safer)
+            if args.smooth_type != "none":
+                logging.warning(f"RTC enabled, overriding smooth_type {args.smooth_type} to 'none'")
+                args.smooth_type = "none" # RTC handles transition
+            if args.spline_offline:
+                logging.warning("RTC enabled, disabling spline_offline")
+                spline_offline_enabled = False
+
         DOF = 6  # 关节数，不含 gripper
 
         if ruckig_enabled:
@@ -809,8 +853,31 @@ def main():
                             anchor = np.asarray(first_item, dtype=float)
                     except Exception:
                         anchor = None
+                    except Exception:
+                        anchor = None
+                
+                # Prepare RTC Context
+                rtc_ctx = None
+                if rtc_enabled:
+                    # inference_delay: how many steps passed since last chunk started
+                    # Effectively action_step_counter (assuming we are perfectly timed or close enough)
+                    # We pass the full last_action_vals.
+                    if last_action_vals is not None:
+                        rtc_ctx = {
+                            "rtc_config": rtc_config,
+                            "prev_actions": last_action_vals,
+                            "inference_delay": action_step_counter
+                        }
+                    else:
+                         # First step, still pass config but no prev actions
+                         rtc_ctx = {
+                            "rtc_config": rtc_config,
+                            "prev_actions": None,
+                            "inference_delay": 0
+                         }
+
                 try:
-                    in_q.put_nowait((sent_idx, obs, anchor))
+                    in_q.put_nowait((sent_idx, obs, anchor, rtc_ctx))
                     sent_idx += 1
                     waiting_for_infer = True
                     action_step_counter = 0
@@ -835,7 +902,12 @@ def main():
                         old_actions.append(item.action)
                     else:
                         old_actions.append(item)
+
                 action_queue.clear()
+                
+                # Store for next RTC iteration (before any smoothing)
+                if rtc_enabled:
+                    last_action_vals = action_vals.copy() if action_vals is not None else None
 
                 # 2. 新推理动作起点
                 if args.align_mode == "step":
