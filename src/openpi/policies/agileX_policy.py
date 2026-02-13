@@ -174,8 +174,27 @@ class AgileXInputs(transforms.DataTransformFn):
     use_images: bool = True
     use_depth: bool = False
 
+    # 可配置的相机名称列表。默认 4 相机保持向后兼容。
+    # 对于 2 相机场景，设置为 ("camera0", "camera1")。
+    camera_names: tuple[str, ...] = ("camera0", "camera1", "camera2", "camera3")
+
+    # 图像 slot 名称映射。如果为 None，自动生成 "image_0", "image_1", ...
+    # 如果提供，长度必须与 camera_names 一致。
+    image_slot_names: tuple[str, ...] | None = None
+
     EXPECTED_CAMERAS: ClassVar[tuple[str, ...]] = ("camera0", "camera1", "camera2", "camera3", 'camera0_depth',
                                                    'camera1_depth', 'camera2_depth', 'camera3_depth',)
+
+    def _get_image_slot_names(self) -> tuple[str, ...]:
+        """Get the image slot names, auto-generating if not provided."""
+        if self.image_slot_names is not None:
+            assert len(self.image_slot_names) == len(self.camera_names), \
+                f"image_slot_names ({len(self.image_slot_names)}) must match camera_names ({len(self.camera_names)})"
+            return self.image_slot_names
+        # 默认命名：4 相机时使用原始名称以保持兼容，其他情况自动生成
+        if self.camera_names == ("camera0", "camera1", "camera2", "camera3"):
+            return ("base_rgb", "right_wrist_rgb", "feng_rgb", "bao_rgb")
+        return tuple(f"image_{i}" for i in range(len(self.camera_names)))
 
     def __call__(self, data: dict) -> dict:
         # 仅在需要图像时才调用 _decode_aloha（其内部会访问 data["images"]）
@@ -190,45 +209,19 @@ class AgileXInputs(transforms.DataTransformFn):
 
         if self.use_images:
             in_images = data["images"]
-            if set(in_images) - set(self.EXPECTED_CAMERAS):
-                raise ValueError(f"Expected images to contain {self.EXPECTED_CAMERAS}, got {tuple(in_images)}")
 
-            # Assume that base image always exists.
-            base_image = in_images["camera0"]
-            right_wrist_image = in_images["camera1"]
-            feng_image = in_images["camera2"]
-            bao_image = in_images["camera3"]
+            slot_names = self._get_image_slot_names()
 
-            images = {
-                "base_rgb": base_image,
-                "right_wrist_rgb": right_wrist_image,
-                "feng_rgb": feng_image,
-                "bao_rgb": bao_image,
-            }
-            image_masks = {
-                "base_rgb": np.True_,
-                "right_wrist_rgb": np.True_,
-                "feng_rgb": np.True_,
-                "bao_rgb": np.True_,
-            }
-
-            # Add the extra images.
-            extra_image_names = {
-            }
+            # 动态构建 images 和 image_masks
+            for cam_name, slot_name in zip(self.camera_names, slot_names):
+                if cam_name not in in_images:
+                    raise ValueError(f"Expected camera '{cam_name}' in images, got {tuple(in_images)}")
+                images[slot_name] = in_images[cam_name]
+                image_masks[slot_name] = np.True_
 
             if self.use_depth:
                 base_image_depth = depth_rgb_u8_to_u16(in_images["camera0_depth"])
                 base_image_depth_processed = depth_u16_to_u8x3(base_image_depth, mode="disparity")
-                # print(base_image_depth.shape)
-                # print(base_image_depth)
-                # vis = ((base_image_depth.astype(np.float32) - base_image_depth[base_image_depth > 0].min())
-                #        / (base_image_depth.max() - base_image_depth[base_image_depth > 0].min() + 1e-8) * 255).astype(
-                #     np.uint8)
-                # cv2.imwrite("depth_linear_hilo.png", vis)
-                # cv2.imwrite("rgb.png", in_images["camera0"])
-                # print(type(in_images["camera0"]))
-                # print(np.asarray(in_images["camera0"]).dtype)
-                # exit(1)
                 bao_image_depth = depth_rgb_u8_to_u16(in_images["camera3_depth"])
                 bao_image_depth_processed = depth_u16_to_u8x3(bao_image_depth, mode="disparity")
 
@@ -236,29 +229,6 @@ class AgileXInputs(transforms.DataTransformFn):
                 images["bao_depth"] = bao_image_depth_processed
                 image_masks["base_depth"] = np.True_
                 image_masks["bao_depth"] = np.True_
-
-            # # 从这开始
-            # images = {
-            #     "right_wrist_rgb": right_wrist_image,
-            #     "right_pole_rgb": right_pole_image,
-            # }
-            # image_masks = {
-            #     "right_wrist_rgb": np.True_,
-            #     "right_pole_rgb": np.True_,
-            # }
-
-            # # Add the extra images.
-            # extra_image_names = {
-            # }
-            # # 到这结束
-
-            for dest, source in extra_image_names.items():
-                if source in in_images:
-                    images[dest] = in_images[source]
-                    image_masks[dest] = np.True_
-                else:
-                    images[dest] = np.zeros_like(base_image)
-                    image_masks[dest] = np.False_
 
         inputs = {
             "image": images,

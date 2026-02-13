@@ -329,7 +329,7 @@ class LeRobotAgileXDataConfig(DataConfigFactory):
     # use speed mode
     use_speed: bool = False
 
-    load_images: bool = False
+    load_images: bool = True
 
     # Repack transforms.
     repack_transforms: tyro.conf.Suppress[_transforms.Group] = dataclasses.field(
@@ -374,9 +374,68 @@ class LeRobotAgileXDataConfig(DataConfigFactory):
             model_transforms=model_transforms,
             action_sequence_keys=self.action_sequence_keys,
             repo_id="lerobot/test",
-            root="/jedata/test_1125_test",
+            root="/workspace/JE_robot_data_lerobot/0211_data_lerobot",
         )
-    
+
+@dataclasses.dataclass(frozen=True)
+class LeRobotAgileXDataConfigThor(DataConfigFactory):
+    """AgileX data config for Jetson Thor with 2 cameras (camera0, camera1), no depth."""
+    use_delta_joint_actions: bool = True
+    default_prompt: str | None = None
+    adapt_to_pi: bool = True
+    use_speed: bool = False
+    load_images: bool = True
+
+    # 数据集根目录，可通过 CLI 传入: --data.data_root /path/to/data
+    data_root: str = "/workspace/JE_robot_data_lerobot/0211_data_lerobot"
+
+    # Repack transforms: 只有 2 个相机
+    repack_transforms: tyro.conf.Suppress[_transforms.Group] = dataclasses.field(
+        default=_transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "images": {"camera0": "camera0",
+                                   "camera1": "camera1"},
+                        "state": "observation.state",
+                        "actions": "action",
+                    }
+                )
+            ]
+        )
+    )
+    action_sequence_keys: Sequence[str] = ("action",)
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig, use_images=load_images) -> DataConfig:
+        data_transforms = _transforms.Group(
+            inputs=[agileX_policy.AgileXInputs(
+                action_dim=model_config.action_dim,
+                adapt_to_pi=self.adapt_to_pi,
+                use_images=use_images,
+                camera_names=("camera0", "camera1"),
+            )],
+            outputs=[agileX_policy.AgileXOutputs(adapt_to_pi=self.adapt_to_pi)],
+        )
+        if self.use_delta_joint_actions:
+            delta_action_mask = _transforms.make_bool_mask(6, -1)
+            data_transforms = data_transforms.push(
+                inputs=[_transforms.DeltaActions(delta_action_mask)],
+                outputs=[_transforms.AbsoluteActions(delta_action_mask)],
+            )
+
+        model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=self.repack_transforms,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+            action_sequence_keys=self.action_sequence_keys,
+            repo_id="lerobot/test",
+            root=self.data_root,
+        )
+
 @dataclasses.dataclass(frozen=True)
 class LeRobotAgileXDataConfigDepth(DataConfigFactory):
     # If true, will convert joint dimensions to deltas with respect to the current state before passing to the model.
@@ -925,8 +984,8 @@ _CONFIGS = [
                             pi05=True).get_freeze_filter(),
         weight_loader=weight_loaders.CheckpointWeightLoader("/jedata/pi0_base/pi05_base/params"),
         data=LeRobotAgileXDataConfig(
-            assets=AssetsConfig(assets_dir="/home/test/jemotor/jedata/test_1112_trans/"),
-            default_prompt="Pick up the PCB board from the green conveyor belt and place it into the yellow container.",
+            assets=AssetsConfig(assets_dir="/workspace/JE_robot_data_lerobot/0211_data_lerobot"),
+            default_prompt="Put the purple carton of milk into the cardboard box.",
         ),
         policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
         wandb_enabled=False,
@@ -943,7 +1002,44 @@ _CONFIGS = [
         keep_period=5_000,
         num_workers=8,
         fsdp_devices=8,
-    ),     
+    ),
+    # pi0.5 for Jetson Thor (2 cameras, single GPU)
+    TrainConfig(
+        name="pi05_agileX_thor",
+        model=pi0_config.Pi0Config(paligemma_variant="gemma_2b",
+                                   action_expert_variant="gemma_300m",
+                                   action_dim=7,
+                                   action_horizon=50,
+                                   max_token_len=128,
+                                   pi05=True),
+        freeze_filter=pi0_config.Pi0Config(paligemma_variant="gemma_2b",
+                                           action_expert_variant="gemma_300m",
+                                           action_dim=7,
+                                           action_horizon=50,
+                                           max_token_len=128,
+                                           pi05=True).get_freeze_filter(),
+        # 使用 --pytorch_weight_path 从 CLI 传入权重路径
+        pytorch_weight_path=None,
+        data=LeRobotAgileXDataConfigThor(
+            assets=AssetsConfig(assets_dir="/workspace/JE_robot_data_lerobot/0211_data_lerobot"),
+            default_prompt="Put the purple carton of milk into the cardboard box.",
+        ),
+        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+        wandb_enabled=False,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=1e-4,
+            decay_steps=3_000,
+            decay_lr=1e-5,
+        ),
+        num_train_steps=1_000_000,
+        batch_size=16,
+        log_interval=100,
+        save_interval=2_500,
+        keep_period=5_000,
+        num_workers=4,
+        fsdp_devices=1,
+    ),
     #pi0
     TrainConfig(
         name="pi0_agileX",

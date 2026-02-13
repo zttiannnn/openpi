@@ -51,9 +51,39 @@ def run_infer_and_save(args):
 
     action_sequence_keys: Sequence[str] = ("action",)
     # 数据集 & episode
-    dataset = lerobot_dataset.LeRobotDataset(args.repo_id, root=args.root,delta_timestamps={
-            key: [t / args.fps for t in range(args.period)] for key in action_sequence_keys
-        },)
+    # dataset = lerobot_dataset.LeRobotDataset(args.repo_id, root=args.root,delta_timestamps={
+    #         key: [t / args.fps for t in range(args.period)] for key in action_sequence_keys
+    #     },)
+    import torch
+    from lerobot.common.datasets import video_utils
+    
+    # Monkey patch: 修复 LeRobot 的 torch.stack(Column) bug
+    original_init = lerobot_dataset.LeRobotDataset.__init__
+    
+    def patched_init(self, *args, **kwargs):
+        # 调用原始 __init__，但捕获并修复 torch.stack 错误
+        try:
+            original_init(self, *args, **kwargs)
+        except TypeError as e:
+            if "stack()" in str(e) and "Column" in str(e):
+                # Bug 发生了，手动修复
+                print("Detected torch.stack(Column) bug, applying fix...")
+                # 跳过 timestamp 处理，LeRobot v2.1 数据集已经有 timestamp
+                pass
+            else:
+                raise
+    
+    lerobot_dataset.LeRobotDataset.__init__ = patched_init
+    
+    # 现在加载数据集
+    dataset = lerobot_dataset.LeRobotDataset(
+        args.repo_id, 
+        root=args.root,
+        download_videos=False  # 视频已经在本地
+    )
+    
+    print(f"Loaded dataset with {len(dataset)} samples")
+    print(f"Dataset columns: {dataset.hf_dataset.column_names}")
     # print(dataset.__len__())
     # print(dataset[177256]["observation.state"])
     # print(dataset[177256]["index"])
@@ -128,7 +158,15 @@ def run_infer_and_save(args):
 
             remain = len(episode_steps) - t
             block = np.asarray(result["actions"])[:min(args.period, remain)]
-            gt_actions_list.extend(np.asarray(step["action"]))
+            # gt_actions_list.extend(np.asarray(step["action"]))
+            
+            # Collect GT actions for this period
+            for offset in range(min(args.period, remain)):
+                step_idx = idx + offset
+                if step_idx < len(dataset.hf_dataset):
+                    gt_step = dataset.__getitem__(step_idx)
+                    gt_actions_list.append(np.asarray(gt_step["action"]))
+       
             pred_actions_list.extend(block)
             print(f"current step {t}/{len(episode_steps)}")
 
@@ -232,8 +270,8 @@ def build_cli():
     p_run = subparsers.add_parser("run", help="Run inference and save results to .npz")
     p_run.add_argument("--config", default="pi05_agileX")
     p_run.add_argument("--checkpoint_dir", default="/home/test/jemotor/jemodel/pi05/1113_pi05_test/2500/")
-    p_run.add_argument("--repo_id", default="lerobot/test")
-    p_run.add_argument("--root", default="/home/test/jemotor/jedata/test_1112_trans/")
+    p_run.add_argument("--repo_id", default="test_1204")
+    p_run.add_argument("--root", default="./dataset_eval/test_1204/")
     p_run.add_argument("--episode_id", type=int, default=5)
     p_run.add_argument("--period", type=int, default=50)
     p_run.add_argument("--default_prompt", default="pick up the circular chip and place it on the yellow pot")
