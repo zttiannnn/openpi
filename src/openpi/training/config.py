@@ -380,6 +380,8 @@ class LeRobotAgileXDataConfig(DataConfigFactory):
 @dataclasses.dataclass(frozen=True)
 class LeRobotAgileXDataConfigThor(DataConfigFactory):
     """AgileX data config for Jetson Thor with 2 cameras (camera0, camera1), no depth."""
+    # Override parent's tyro.MISSING to provide a default
+    repo_id: str = "lerobot/test"
     use_delta_joint_actions: bool = True
     default_prompt: str | None = None
     adapt_to_pi: bool = True
@@ -1025,14 +1027,14 @@ _CONFIGS = [
             default_prompt="Put the purple carton of milk into the cardboard box.",
         ),
         policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
-        wandb_enabled=False,
+        wandb_enabled=True,
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=1_000,
             peak_lr=1e-4,
             decay_steps=3_000,
             decay_lr=1e-5,
         ),
-        num_train_steps=1_000_000,
+        num_train_steps=130_000,
         batch_size=16,
         log_interval=100,
         save_interval=2_500,

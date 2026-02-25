@@ -100,7 +100,7 @@ def plot_arrays(data: Dict[str, Any], output_path: str = None) -> None:
             ax.set_ylabel("Value")
             # Limit y-axis for infer_times_ms
             if "infer_times_ms" in key.lower() or "infer_time" in key.lower():
-                ax.set_ylim(top=500)
+                ax.set_ylim(top=300, bottom=200)
                 ax.set_ylabel("Time (ms)")
         elif arr.ndim == 2:
             if arr.shape[0] > arr.shape[1]:
@@ -181,7 +181,7 @@ def compare_arrays(data: Dict[str, Any], keys: List[str], output_path: str = Non
                 ax.grid(True, alpha=0.3)
                 # Limit y-axis for infer_times_ms
                 if "infer_times_ms" in key.lower() or "infer_time" in key.lower():
-                    ax.set_ylim(top=500)
+                    ax.set_ylim(top=300, bottom=200)
             elif arr.ndim == 2:
                 im = ax.imshow(arr, aspect='auto', cmap='viridis', interpolation='nearest')
                 ax.set_ylabel(f"{key} ({arr.shape})")

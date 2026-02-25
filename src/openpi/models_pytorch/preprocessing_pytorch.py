@@ -23,13 +23,17 @@ def preprocess_observation_pytorch(
     observation,
     *,
     train: bool = False,
-    image_keys: Sequence[str] = IMAGE_KEYS,
+    image_keys: Sequence[str] | None = None,
     image_resolution: tuple[int, int] = IMAGE_RESOLUTION,
 ):
     """Torch.compile-compatible version of preprocess_observation_pytorch with simplified type annotations.
 
     This function avoids complex type annotations that can cause torch.compile issues.
     """
+    # If no image_keys specified, use whatever keys are in the observation
+    if image_keys is None:
+        image_keys = tuple(observation.images.keys())
+
     if not set(image_keys).issubset(observation.images):
         raise ValueError(f"images dict missing keys: expected {image_keys}, got {list(observation.images)}")
 

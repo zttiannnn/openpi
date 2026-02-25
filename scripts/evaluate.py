@@ -133,24 +133,20 @@ def run_infer_and_save(args):
             infer_states_list.append(cur_state)  # ⭐ 保存
             print(cur_state)
             obs = {
-                "images": {
-                    "camera0": step["camera0"],
-                    "camera1": step["camera1"],
-                    "camera2": step["camera2"],
-                    "camera3": step["camera3"],
-                },
-                "image_masks": {
-                    "camera0": np.array([True], dtype=bool),
-                    "camera1": np.array([True], dtype=bool),
-                    "camera2": np.array([True], dtype=bool),
-                    "camera3": np.array([True], dtype=bool),
-                },
+                "images": {},
+                "image_masks": {},
                 "state": cur_state,
                 "tokenized_prompt": tokenized,
                 "tokenized_prompt_mask": mask,
                 "token_ar_mask": None,
                 "token_loss_mask": None,
             }
+            # Dynamically add camera images based on what's available in the dataset
+            for cam_key in args.cameras.split(","):
+                cam_key = cam_key.strip()
+                if cam_key in step:
+                    obs["images"][cam_key] = step[cam_key]
+                    obs["image_masks"][cam_key] = np.array([True], dtype=bool)
 
             tic = time.time()
             result = policy.infer(obs)
@@ -269,10 +265,10 @@ def build_cli():
     # run
     p_run = subparsers.add_parser("run", help="Run inference and save results to .npz")
     p_run.add_argument("--config", default="pi05_agileX")
-    p_run.add_argument("--checkpoint_dir", default="/home/test/jemotor/jemodel/pi05/1113_pi05_test/2500/")
+    p_run.add_argument("--checkpoint_dir", default="./checkpoints/pi05_agileX_thor/thor_torch_pi05_agileX/57500/")
     p_run.add_argument("--repo_id", default="test_1204")
     p_run.add_argument("--root", default="./dataset_eval/test_1204/")
-    p_run.add_argument("--episode_id", type=int, default=5)
+    p_run.add_argument("--episode_id", type=int, default=0)
     p_run.add_argument("--period", type=int, default=50)
     p_run.add_argument("--default_prompt", default="pick up the circular chip and place it on the yellow pot")
     p_run.add_argument("--out", default="./save2.npz")
@@ -280,7 +276,8 @@ def build_cli():
     p_run.add_argument("--out-png", default="", help="If --plot-after-run, output PNG path (optional).")
     p_run.add_argument("--dpi", type=int, default=150)
     p_run.add_argument("--fps", type=int, default=30)
-    p_run.add_argument("--mode", required=False, type=str, default="speed")
+    p_run.add_argument("--mode", required=False, type=str, default="normal")
+    p_run.add_argument("--cameras", default="camera0,camera1", help="Comma-separated list of camera keys")
     p_run.set_defaults(func=run_infer_and_save)
 
     # plot

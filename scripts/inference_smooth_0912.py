@@ -283,6 +283,7 @@ def main():
     parser = argparse.ArgumentParser(description="Inference script for AgileX follower robot")
     parser.add_argument("--port", type=str, required=True, help="port name")
     parser.add_argument("--checkpoint_dir", required=True, type=str, help="path to checkpoint directory")
+    parser.add_argument("--config", type=str, default="pi05_agileX", help="model config name")
     parser.add_argument("--fps", type=int, required=False, default=30, help="frames per second")
     parser.add_argument("--task", type=str, required=True, help="task prompt")
     parser.add_argument("--id", type=str, required=False, help="robot id", default="left")
@@ -308,7 +309,8 @@ def main():
 
     set_seeds(args.seed)
 
-    logger = NumpyCSVLogger("/home/test/test_tra/12500_ewa_07_1.csv", mode="w")
+    log_path = args.checkpoint_dir.rstrip('/') + "_infer_log.csv"
+    logger = NumpyCSVLogger(log_path, mode="w")
     print_log = True
 
     # 解析摄像头配置
@@ -336,7 +338,7 @@ def main():
     ctx = mp.get_context("spawn")        # "spawn" 更安全，尤其 CUDA
     in_q: mp.Queue = ctx.Queue(maxsize=4)   # 根据实时性调节 maxsize
     out_q: mp.Queue = ctx.Queue(maxsize=4)
-    config = _config.get_config("pi05_agileX")
+    config = _config.get_config(args.config)
     checkpoint_dir = args.checkpoint_dir #"/home/agx/jemodel/test/40000"
     logging.info(f"policy path: {checkpoint_dir}")
 

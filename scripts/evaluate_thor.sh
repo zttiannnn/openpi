@@ -1,0 +1,11 @@
+python scripts/evaluate.py run \
+ --config pi05_agileX_thor \
+ --checkpoint_dir ./checkpoints/pi05_agileX_thor/thor_torch_pi05_agileX/57500/ \
+ --repo_id lerobot/test \
+ --root /workspace/JE_robot_data_lerobot/0211_data_lerobot \
+ --episode_id 0 \
+ --default_prompt Put the purple carton of milk into the cardboard box. \
+ --out ./eval_thor.npz \
+ --plot-after-run \
+ --out ./thor_57500.npz \
+ --out-png ./thor_57500.png
