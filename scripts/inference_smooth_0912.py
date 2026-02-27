@@ -14,6 +14,7 @@ from scripts.numpy_logger import NumpyCSVLogger
 
 from openpi.policies import policy_config as _policy_config
 from openpi.models.tokenizer import PaligemmaTokenizer
+from openpi.models_pytorch.rtc_utils import RTCConfig
 from openpi.training import config as _config
 from third_party.agilex.agilexfollower import AlohaAgileXFollower
 from third_party.agilex.agilexconfig import AlohaAgileXFollowerConfig
@@ -56,8 +57,11 @@ def inference_worker(
         if item is None:            # 收到结束标识
             del policy
             break
-        # item expected to be (idx, obs, anchor) where anchor may be None
-        if isinstance(item, tuple) and len(item) == 3:
+        # item expected to be (idx, obs, anchor) or (idx, obs, anchor, rtc_context)
+        rtc_context = None
+        if isinstance(item, tuple) and len(item) == 4:
+            idx, obs, anchor, rtc_context = item
+        elif isinstance(item, tuple) and len(item) == 3:
             idx, obs, anchor = item
         elif isinstance(item, tuple) and len(item) == 2:
             idx, obs = item
@@ -66,10 +70,27 @@ def inference_worker(
             # unexpected message, skip
             continue
         start_time = time.time()
-        result = policy.infer(obs)
+
+        # Prepare RTC kwargs for policy.infer
+        infer_kwargs = {}
+        if rtc_context:
+            infer_kwargs.update(rtc_context)
+
+        result = policy.infer(obs, **infer_kwargs)
         infer_time = time.time() - start_time
         print(f"Step {idx}: infer time = {infer_time:.4f} seconds")
         actions = result.get("actions")
+        # Get raw (normalized) model output for RTC prev_actions — this is pre-transform
+        raw_actions = result.get("raw_actions")  # normalized, in model output space
+        # ── RTC Debug ──
+        if rtc_context:
+            print(f"  RTC: inference_delay={rtc_context.get('inference_delay')}, "
+                  f"prev_actions={'set' if rtc_context.get('prev_actions') is not None else 'None'}")
+        if raw_actions is not None:
+            print(f"  raw_actions (normalized) range: [{raw_actions.min():.4f}, {raw_actions.max():.4f}], shape={raw_actions.shape}")
+        if actions is not None:
+            act_arr = np.asarray(actions)
+            print(f"  actions (denormalized) range: [{act_arr.min():.1f}, {act_arr.max():.1f}], shape={act_arr.shape}")
         # perform horizon-level smoothing and optional QP optimization in worker
         try:
             if actions is not None:
@@ -106,7 +127,7 @@ def inference_worker(
                     actions = np.concatenate([body, grip], axis=1)
         except Exception as e:
             logging.exception("worker horizon postprocessing failed, falling back to raw actions: %s", e)
-        out_q.put((idx, actions))
+        out_q.put((idx, actions, raw_actions))
 
 def _apply_transition(old_actions, new_actions, h_fn):
     """
@@ -291,7 +312,7 @@ def main():
     parser.add_argument("--max_relative_target", type=int, required=False, default=None)
     parser.add_argument("--use_degrees", action="store_true")
     parser.add_argument("--action_steps", type=int, required=False, default=20, help="number of action steps to execute before next inference")
-    parser.add_argument("--smooth_type", type=str, default="cubic", choices=["linear", "cubic", "quintic", "ema"], help="动作平滑策略: linear/cubic/quintic/ema")
+    parser.add_argument("--smooth_type", type=str, default="cubic", choices=["none", "linear", "cubic", "quintic", "ema"], help="动作平滑策略: none/linear/cubic/quintic/ema")
     parser.add_argument("--ema_alpha", type=float, default=0.5, help="EMA平滑时新动作权重alpha,0~1")
     parser.add_argument("--align_mode", type=str, default="step", choices=["step", "euclidean"], help="新动作对齐方式: step(步数) 或 euclidean(欧氏距离)")
     # Horizon-level smoothing of the predicted action sequence (uses full predicted horizon)
@@ -301,11 +322,37 @@ def main():
     # QP-style online optimizer options
     parser.add_argument("--qp_lambda_acc", type=float, default=0.0, help="二阶差分加速惩罚系数（>=0），qp优化时使用。0 表示禁用")
     parser.add_argument("--qp_velocity_limit", type=float, default=0.0, help="可选的每步最大速度（动作单位/step），>0 则启用简单束缚后处理")
+    # RTC (Real-Time Chunking) options
+    parser.add_argument("--rtc_enable", action="store_true", help="启用 RTC 平滑（替代 chunk 间 transition 平滑）")
+    parser.add_argument("--rtc_execution_horizon", type=int, default=10, help="RTC 执行 horizon（权重衰减区间终点）")
+    parser.add_argument("--rtc_max_guidance_weight", type=float, default=None, help="RTC 最大 guidance 权重 (默认=num_steps)")
+    parser.add_argument("--rtc_sigma_d", type=float, default=1.0, help="RTC 先验方差缩放参数")
+    parser.add_argument("--rtc_schedule", type=str, default="linear", choices=["zeros", "ones", "linear", "exp"], help="RTC 权重衰减策略")
     # speed or pose
     parser.add_argument("--mode", type=str, required=False, default="pose", help="inference mode")
     # jitter seed
     parser.add_argument("--seed", type=int, required=False, default=10002)
     args = parser.parse_args()
+
+    # RTC configuration
+    rtc_enabled = args.rtc_enable
+    rtc_config = None
+    if rtc_enabled:
+        rtc_config = RTCConfig(
+            enabled=True,
+            prefix_attention_schedule=args.rtc_schedule,
+            max_guidance_weight=args.rtc_max_guidance_weight,
+            execution_horizon=args.rtc_execution_horizon,
+            sigma_d=args.rtc_sigma_d,
+        )
+        # RTC and transition smoothing are complementary:
+        #   RTC = model-level consistency (during denoising)
+        #   smooth_type = execution-level chunk transition (cubic/ema/etc.)
+        # Both can be used together. User controls smooth_type independently.
+        logging.info(f"RTC enabled: {rtc_config}")
+        logging.info(f"smooth_type={args.smooth_type}, horizon_smooth={args.horizon_smooth}")
+
+    last_raw_action_vals = None  # stores raw model output for RTC prev_actions
 
     set_seeds(args.seed)
 
@@ -401,8 +448,27 @@ def main():
                     anchor = np.asarray(action_queue[0], dtype=float)
                 except Exception:
                     anchor = None
+            # Prepare RTC context if enabled
+            rtc_ctx = None
+            if rtc_enabled:
+                if last_raw_action_vals is not None:
+                    rtc_ctx = {
+                        "rtc_config": rtc_config,
+                        "prev_actions": last_raw_action_vals,
+                        "inference_delay": action_step_counter,
+                    }
+                else:
+                    # First step: pass config but no prev_actions (guidance will be skipped)
+                    rtc_ctx = {
+                        "rtc_config": rtc_config,
+                        "prev_actions": None,
+                        "inference_delay": 0,
+                    }
             try:
-                in_q.put_nowait((sent_idx, obs, anchor))
+                if rtc_ctx is not None:
+                    in_q.put_nowait((sent_idx, obs, anchor, rtc_ctx))
+                else:
+                    in_q.put_nowait((sent_idx, obs, anchor))
                 sent_idx += 1
                 waiting_for_infer = True
                 action_step_counter = 0
@@ -411,9 +477,15 @@ def main():
 
         # 2. 如果有新推理结果，立即清空并更新 action_queue
         try:
-            idx, action_vals = out_q.get_nowait()
+            result_tuple = out_q.get_nowait()
+            # Worker returns (idx, actions, raw_actions)
+            idx, action_vals, raw_action_vals = result_tuple
             recv_idx = idx
             logging.debug(f"got result #{recv_idx}")
+
+            # Save raw model output for next RTC iteration (before any post-processing)
+            if rtc_enabled and raw_action_vals is not None:
+                last_raw_action_vals = raw_action_vals.copy()
 
             # 1. 记录未执行的旧动作
             old_actions = list(action_queue)
@@ -482,7 +554,10 @@ def main():
                 logging.exception("qp horizon optimization failed, falling back to pre-qped predictions: %s", e)
 
             # 3. 平滑衔接（可通过参数切换）
-            if args.smooth_type == "linear":
+            if args.smooth_type == "none":
+                # No chunk-to-chunk transition smoothing (e.g. when RTC handles it)
+                smooth_actions = list(new_actions)
+            elif args.smooth_type == "linear":
                 smooth_actions = linear_transition(old_actions, new_actions)
             elif args.smooth_type == "cubic":
                 smooth_actions = cubic_transition(old_actions, new_actions)

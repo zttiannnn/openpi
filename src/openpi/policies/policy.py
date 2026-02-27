@@ -59,13 +59,15 @@ class Policy(BasePolicy):
             self._model = self._model.to(pytorch_device)
             self._model.eval()
             self._sample_actions = model.sample_actions
+            self._sample_actions_rtc = model.sample_actions_rtc
         else:
             # JAX model setup
             self._sample_actions = nnx_utils.module_jit(model.sample_actions)
+            self._sample_actions_rtc = None
             self._rng = rng or jax.random.key(0)
 
     @override
-    def infer(self, obs: dict, *, noise: np.ndarray | None = None) -> dict:  # type: ignore[misc]
+    def infer(self, obs: dict, *, noise: np.ndarray | None = None, **kwargs) -> dict:  # type: ignore[misc]
         # Make a copy since transformations may modify the inputs in place.
         inputs = jax.tree.map(lambda x: x, obs)
         inputs = self._input_transform(inputs)
@@ -80,6 +82,7 @@ class Policy(BasePolicy):
 
         # Prepare kwargs for sample_actions
         sample_kwargs = dict(self._sample_kwargs)
+        sample_kwargs.update(kwargs)
         if noise is not None:
             noise = torch.from_numpy(noise).to(self._pytorch_device) if self._is_pytorch_model else jnp.asarray(noise)
 
@@ -89,9 +92,19 @@ class Policy(BasePolicy):
 
         observation = _model.Observation.from_dict(inputs)
         start_time = time.monotonic()
+
+        # Route to RTC method if rtc_config is present (avoids torch.compile issues)
+        use_rtc = "rtc_config" in sample_kwargs and sample_kwargs["rtc_config"] is not None
+        if use_rtc and self._sample_actions_rtc is not None:
+            sample_fn = self._sample_actions_rtc
+        else:
+            sample_fn = self._sample_actions
+
+        raw_model_actions = sample_fn(sample_rng_or_pytorch_device, observation, **sample_kwargs)
+
         outputs = {
             "state": inputs["state"],
-            "actions": self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs),
+            "actions": raw_model_actions,
         }
         model_time = time.monotonic() - start_time
         if self._is_pytorch_model:
@@ -99,7 +112,11 @@ class Policy(BasePolicy):
         else:
             outputs = jax.tree.map(lambda x: np.asarray(x[0, ...]), outputs)
 
+        # Save raw (normalized) model output BEFORE output_transform for RTC prev_actions
+        raw_actions_np = outputs["actions"].copy()
+
         outputs = self._output_transform(outputs)
+        outputs["raw_actions"] = raw_actions_np  # normalized, pre-transform
         outputs["policy_timing"] = {
             "infer_ms": model_time * 1000,
         }

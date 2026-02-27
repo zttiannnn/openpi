@@ -6,9 +6,12 @@ from torch import Tensor
 from torch import nn
 import torch.nn.functional as F  # noqa: N812
 
+import numpy as np
+
 import openpi.models.gemma as _gemma
 from openpi.models_pytorch.gemma_pytorch import PaliGemmaWithExpertModel
 import openpi.models_pytorch.preprocessing_pytorch as _preprocessing
+from openpi.models_pytorch.rtc_utils import RTCConfig, get_prefix_weights
 
 
 def get_safe_dtype(target_dtype, device_type):
@@ -374,7 +377,11 @@ class PI0Pytorch(nn.Module):
 
     @torch.no_grad()
     def sample_actions(self, device, observation, noise=None, num_steps=10) -> Tensor:
-        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
+        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)
+
+        This method is compiled via torch.compile for performance.
+        For RTC guidance, use sample_actions_rtc() instead.
+        """
         bsize = observation.state.shape[0]
         if noise is None:
             actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
@@ -412,6 +419,133 @@ class PI0Pytorch(nn.Module):
                 x_t,
                 expanded_time,
             )
+
+            # Euler step - use new tensor assignment instead of in-place operation
+            x_t = x_t + dt * v_t
+            time += dt
+        return x_t
+
+    @torch.no_grad()
+    def sample_actions_rtc(
+        self, device, observation, noise=None, num_steps=10,
+        rtc_config=None, prev_actions=None, inference_delay=0,
+    ) -> Tensor:
+        """Inference with RTC (Real-Time Chunking) guidance.
+
+        This method is NOT compiled (torch.compile is incompatible with
+        the dynamic RTC logic). It shares the same structure as sample_actions
+        but adds guidance correction after each denoise step.
+
+        If rtc_config is None or prev_actions is None, falls back to
+        standard denoising (equivalent to sample_actions but without compile).
+        """
+        bsize = observation.state.shape[0]
+        if noise is None:
+            actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
+            noise = self.sample_noise(actions_shape, device)
+
+        images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=False)
+
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+
+        # Compute image and language key value cache
+        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
+        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
+
+        _, past_key_values = self.paligemma_with_expert.forward(
+            attention_mask=prefix_att_2d_masks_4d,
+            position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,
+        )
+
+        # ── RTC: Pre-compute guidance weights (shifted, temporally aligned) ──
+        # Shift prev_actions by d so that position i compares same absolute time:
+        #   shifted_prev[i] = prev_actions[i + d]  (both = T_old + d + i)
+        # Then ramp weights from 1→0 over the valid overlap region.
+        rtc_weights = None
+        prev_actions_t = None
+        rtc_max_weight = 0.0
+        sigma2 = 1.0
+        if rtc_config is not None and rtc_config.enabled and prev_actions is not None:
+            d = int(inference_delay)
+            H = self.config.action_horizon
+
+            # Convert prev_actions to tensor
+            if isinstance(prev_actions, np.ndarray):
+                prev_actions_t = torch.from_numpy(prev_actions).to(dtype=torch.float32, device=device)
+            else:
+                prev_actions_t = prev_actions.to(dtype=torch.float32, device=device)
+            if prev_actions_t.ndim == 2:
+                prev_actions_t = prev_actions_t.unsqueeze(0)  # (1, H, D)
+
+            # Temporal shift: align prev_actions to current chunk's time frame
+            overlap = H - d  # number of positions with valid overlap
+            if overlap > 0:
+                shifted_prev = torch.zeros_like(prev_actions_t)
+                shifted_prev[:, :overlap, :] = prev_actions_t[:, d:, :]
+                prev_actions_t = shifted_prev
+
+                # Guidance ramp over the overlap region
+                # effective_end = min(execution_horizon, overlap):
+                #   - execution_horizon: user's desired guidance range
+                #   - overlap: maximum possible (limited by available data)
+                effective_end = min(rtc_config.execution_horizon, overlap)
+
+                w = get_prefix_weights(
+                    start=0,
+                    end=effective_end,
+                    total=H,
+                    schedule=rtc_config.prefix_attention_schedule,
+                )
+                rtc_weights = w.to(device).unsqueeze(0).unsqueeze(-1)  # (1, H, 1)
+                rtc_max_weight = rtc_config.max_guidance_weight if rtc_config.max_guidance_weight is not None else float(num_steps)
+                sigma2 = rtc_config.sigma_d ** 2
+                print(f"  [RTC] d={d}, overlap={overlap}, effective_end={effective_end}, "
+                      f"non-zero={int((w > 0).sum())}/{H}, "
+                      f"max_w={rtc_max_weight}, sigma2={sigma2}, "
+                      f"prev_actions range=[{prev_actions_t.min():.4f}, {prev_actions_t.max():.4f}]")
+            else:
+                # No overlap — skip guidance
+                prev_actions_t = None
+
+        dt = -1.0 / num_steps
+        dt = torch.tensor(dt, dtype=torch.float32, device=device)
+
+        x_t = noise
+        time = torch.tensor(1.0, dtype=torch.float32, device=device)
+        while time >= -dt / 2:
+            expanded_time = time.expand(bsize)
+            v_t = self.denoise_step(
+                state,
+                prefix_pad_masks,
+                past_key_values,
+                x_t,
+                expanded_time,
+            )
+
+            # ── RTC Guidance ──
+            if rtc_weights is not None:
+                t_scalar = time  # current time (1 → 0)
+                # Predict x_0 from current state
+                x1_t = x_t - t_scalar * v_t
+                # Compute denoising progress
+                tau = 1.0 - t_scalar
+                # Weighted error between previous and current prediction
+                err = (prev_actions_t - x1_t) * rtc_weights
+                # Guidance weight formula from RTC paper
+                one_minus_tau = 1.0 - tau  # = t_scalar
+                sq_one_minus_tau = one_minus_tau ** 2
+                numerator = sq_one_minus_tau + (tau ** 2) * sigma2
+                denominator = sq_one_minus_tau * sigma2 + 1e-6
+                inv_r2 = numerator / denominator
+                c = one_minus_tau / (tau + 1e-6)
+                raw_weight = c * inv_r2
+                guidance_w = torch.clamp(raw_weight, max=rtc_max_weight)
+                v_t = v_t - guidance_w * err
 
             # Euler step - use new tensor assignment instead of in-place operation
             x_t = x_t + dt * v_t
