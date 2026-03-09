@@ -1,11 +1,10 @@
 python scripts/evaluate.py run \
  --config pi05_agileX_thor \
- --checkpoint_dir ./checkpoints/pi05_agileX_thor/thor_torch_pi05_agileX/57500/ \
+ --checkpoint_dir ./checkpoints/pi05_agileX_thor/grad_acc_4_lr_2e-4_1e-6/20000 \
  --repo_id lerobot/test \
- --root /workspace/JE_robot_data_lerobot/0211_data_lerobot \
- --episode_id 0 \
- --default_prompt Put the purple carton of milk into the cardboard box. \
- --out ./eval_thor.npz \
+ --root /workspace/JE_robot_data_lerobot/0228_data_lerobot \
+ --episode_id 1 \
+ --default_prompt "Put the purple carton of milk into the cardboard box." \
+ --out ./thor_0309_20000_data0228.npz \
  --plot-after-run \
- --out ./thor_57500.npz \
- --out-png ./thor_57500.png
+ --out-png ./thor_0309_20000_data0228.png

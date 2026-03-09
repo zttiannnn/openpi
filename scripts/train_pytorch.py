@@ -29,6 +29,7 @@ import logging
 import os
 import platform
 import shutil
+import signal
 import time
 
 import jax
@@ -351,8 +352,12 @@ def train_loop(config: _config.TrainConfig):
     # For N GPUs, each GPU should get batch_size/N samples, so total across all GPUs is batch_size
     world_size = torch.distributed.get_world_size() if use_ddp else 1
     effective_batch_size = config.batch_size // world_size
+    accum_steps = getattr(config, "gradient_accumulation_steps", 1)
     logging.info(
         f"Using batch size per GPU: {effective_batch_size} (total batch size across {world_size} GPUs: {config.batch_size})"
+    )
+    logging.info(
+        f"Gradient accumulation steps: {accum_steps}, effective batch size: {config.batch_size * accum_steps}"
     )
 
     # Pass the original batch size to data loader - it will handle DDP splitting internally
@@ -498,6 +503,7 @@ def train_loop(config: _config.TrainConfig):
         logging.info(
             f"Optimizer: {type(config.optimizer).__name__}, weight_decay={config.optimizer.weight_decay}, clip_norm={config.optimizer.clip_gradient_norm}"
         )
+        logging.info(f"Gradient accumulation steps: {accum_steps}, effective batch size: {config.batch_size * accum_steps}")
         logging.info("EMA is not supported for PyTorch training")
         logging.info(f"Training precision: {model_cfg.dtype}")
 
@@ -507,6 +513,21 @@ def train_loop(config: _config.TrainConfig):
         if is_main
         else None
     )
+
+    micro_step = 0  # Counts raw forward/backward passes for gradient accumulation
+
+    # ---- Graceful shutdown on Ctrl+C / SIGTERM ----
+    _stop_requested = False
+
+    def _request_stop(signum, frame):  # noqa: ARG001
+        nonlocal _stop_requested
+        if is_main:
+            logging.warning(f"Signal {signum} received — will save checkpoint and exit after this optimizer step.")
+        _stop_requested = True
+
+    signal.signal(signal.SIGINT, _request_stop)
+    signal.signal(signal.SIGTERM, _request_stop)
+    # -----------------------------------------------
 
     while global_step < config.num_train_steps:
         # Set epoch for distributed training
@@ -523,11 +544,12 @@ def train_loop(config: _config.TrainConfig):
             actions = actions.to(torch.float32)  # noqa: PLW2901
             actions = actions.to(device)  # noqa: PLW2901
 
-            # Update LR
-            for pg in optim.param_groups:
-                pg["lr"] = lr_schedule(global_step)
+            # Update LR at the start of each optimizer step (not micro-step)
+            if micro_step % accum_steps == 0:
+                for pg in optim.param_groups:
+                    pg["lr"] = lr_schedule(global_step)
 
-            # Forward pass
+            # Forward pass — scale loss for accumulation so gradients are averaged
             losses = model(observation, actions)
             # Ensure losses is a tensor and handle different return types
             if isinstance(losses, list | tuple):
@@ -535,12 +557,18 @@ def train_loop(config: _config.TrainConfig):
             elif not isinstance(losses, torch.Tensor):
                 losses = torch.tensor(losses, device=device, dtype=torch.float32)
 
-            loss = losses.mean()
+            loss = losses.mean() / accum_steps
 
             # Backward pass
             loss.backward()
 
-            # Log memory usage after backward pass
+            micro_step += 1
+
+            # Only update weights after accumulating enough gradients
+            if micro_step % accum_steps != 0:
+                continue
+
+            # Log memory usage after backward pass (first few optimizer steps)
             if global_step < 5 and is_main and torch.cuda.is_available():
                 log_memory_usage(device, global_step, "after_backward")
 
@@ -557,11 +585,14 @@ def train_loop(config: _config.TrainConfig):
                     param.grad.detach_()
                     param.grad = None
 
+            # loss.item() gives the scaled loss; multiply back for logging
+            unscaled_loss = loss.item() * accum_steps
+
             # Collect stats
             if is_main:
                 infos.append(
                     {
-                        "loss": loss.item(),
+                        "loss": unscaled_loss,
                         "learning_rate": optim.param_groups[0]["lr"],
                         "grad_norm": float(grad_norm) if isinstance(grad_norm, torch.Tensor) else grad_norm,
                     }
@@ -606,11 +637,33 @@ def train_loop(config: _config.TrainConfig):
             # Save checkpoint using the new mechanism
             save_checkpoint(model, optim, global_step, config, is_main, data_config)
 
+            # Graceful stop: save immediately and exit
+            if _stop_requested:
+                if is_main:
+                    logging.warning(f"Graceful stop: saving emergency checkpoint at step {global_step}...")
+                    _emergency_ckpt_dir = config.checkpoint_dir / f"{global_step}"
+                    _tmp_dir = config.checkpoint_dir / f"tmp_{global_step}"
+                    if _tmp_dir.exists():
+                        shutil.rmtree(_tmp_dir)
+                    _tmp_dir.mkdir(parents=True, exist_ok=True)
+                    _model_to_save = model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
+                    safetensors.torch.save_model(_model_to_save, _tmp_dir / "model.safetensors")
+                    torch.save(optim.state_dict(), _tmp_dir / "optimizer.pt")
+                    torch.save({"global_step": global_step, "timestamp": time.time()}, _tmp_dir / "metadata.pt")
+                    norm_stats = data_config.norm_stats
+                    if norm_stats is not None and data_config.asset_id is not None:
+                        _normalize.save(_tmp_dir / data_config.asset_id, norm_stats)
+                    if _emergency_ckpt_dir.exists():
+                        shutil.rmtree(_emergency_ckpt_dir)
+                    _tmp_dir.rename(_emergency_ckpt_dir)
+                    logging.warning(f"Emergency checkpoint saved at step {global_step} -> {_emergency_ckpt_dir}")
+                break
+
             # Update progress bar
             if pbar is not None:
                 pbar.update(1)
                 pbar.set_postfix(
-                    {"loss": f"{loss.item():.4f}", "lr": f"{optim.param_groups[0]['lr']:.2e}", "step": global_step}
+                    {"loss": f"{unscaled_loss:.4f}", "lr": f"{optim.param_groups[0]['lr']:.2e}", "step": global_step}
                 )
 
     # Close progress bar

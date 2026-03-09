@@ -799,6 +799,9 @@ class TrainConfig:
     num_workers: int = 2
     # Number of train steps (batches) to run.
     num_train_steps: int = 30_000
+    # Number of gradient accumulation steps. Effective batch size = batch_size * gradient_accumulation_steps.
+    # Useful for single-GPU training to simulate larger batch sizes without extra memory.
+    gradient_accumulation_steps: int = 1
 
     # How often (in steps) to log training metrics.
     log_interval: int = 100
@@ -1023,22 +1026,23 @@ _CONFIGS = [
         # 使用 --pytorch_weight_path 从 CLI 传入权重路径
         pytorch_weight_path=None,
         data=LeRobotAgileXDataConfigThor(
-            assets=AssetsConfig(assets_dir="/workspace/JE_robot_data_lerobot/0211_data_lerobot"),
+            assets=AssetsConfig(assets_dir="/workspace/JE_robot_data_lerobot/0228_data_lerobot"),
             default_prompt="Put the purple carton of milk into the cardboard box.",
         ),
         policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
         wandb_enabled=True,
         lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=1_000,
-            peak_lr=1e-4,
-            decay_steps=3_000,
-            decay_lr=1e-5,
+            warmup_steps=2_000,
+            peak_lr=2e-4,
+            decay_steps=50_000,
+            decay_lr=1e-6,
         ),
-        num_train_steps=130_000,
+        num_train_steps=80_000,
         batch_size=16,
+        gradient_accumulation_steps=4,
         log_interval=100,
-        save_interval=2_500,
-        keep_period=5_000,
+        save_interval=10_000,
+        keep_period=10_000,
         num_workers=4,
         fsdp_devices=1,
     ),
