@@ -5,8 +5,10 @@ policies by guiding the denoising process towards the previous chunk's predictio
 """
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 
+import numpy as np
 import torch
 
 
@@ -24,6 +26,22 @@ class RTCConfig:
     execution_horizon: int = 10
     # Prior variance scale parameter
     sigma_d: float = 1.0
+    # Match lerobot default behavior unless explicitly opting into direct error guidance.
+    full_trajectory_alignment: bool = False
+
+
+@dataclass(frozen=True)
+class RTCRuntimeStats:
+    """Runtime diagnostics for RTC chunk handoff quality."""
+
+    action_index_before_inference: int
+    leftover_len_at_send: int
+    real_delay: int
+    rtc_execution_horizon: int
+    effective_guided_steps: int
+    overlap_len: int
+    overlap_l2_before: float | None
+    overlap_l2_after: float | None
 
 
 def get_prefix_weights(
@@ -76,17 +94,273 @@ def get_prefix_weights(
             weights[start:end] = ramp_vals
 
     elif schedule == "exp":
-        # Start from linear, then apply exponential transform to accelerate decay
+        # Match lerobot's exponentially weighted linear ramp.
         if start > 0:
             weights[:start] = 1.0
         ramp_len = end - start
         if ramp_len > 0:
             ramp_vals = torch.linspace(1.0, 0.0, ramp_len + 2)[1:-1]
+            ramp_vals = ramp_vals * torch.expm1(ramp_vals).div(math.e - 1.0)
             weights[start:end] = ramp_vals
-        # Exponential transform: maps [0,1] -> [0,1] with faster decay
-        weights = (torch.exp(weights) - 1.0) / (math.e - 1.0)
 
     else:
         raise ValueError(f"Unknown RTC schedule: {schedule!r}")
 
     return weights
+
+
+def _compute_overlap_l2(
+    previous_actions: np.ndarray | None,
+    new_actions: np.ndarray | None,
+    real_delay: int,
+) -> tuple[int, float | None]:
+    if previous_actions is None or new_actions is None:
+        return 0, None
+
+    prev_arr = np.asarray(previous_actions, dtype=np.float32)
+    new_arr = np.asarray(new_actions, dtype=np.float32)
+
+    if prev_arr.ndim == 1:
+        prev_arr = prev_arr[None, :]
+    if new_arr.ndim == 1:
+        new_arr = new_arr[None, :]
+
+    trimmed_new_arr = new_arr[max(real_delay, 0) :]
+    overlap_len = min(len(prev_arr), len(trimmed_new_arr))
+    if overlap_len <= 0:
+        return 0, None
+
+    overlap_l2 = float(np.linalg.norm(prev_arr[:overlap_len] - trimmed_new_arr[:overlap_len]))
+    return overlap_len, overlap_l2
+
+
+def compute_rtc_runtime_stats(
+    *,
+    prev_raw_left_over: np.ndarray | None,
+    prev_processed_left_over: np.ndarray | None,
+    new_raw_actions: np.ndarray | None,
+    new_processed_actions: np.ndarray | None,
+    real_delay: int,
+    leftover_len_at_send: int,
+    rtc_execution_horizon: int,
+    action_index_before_inference: int,
+) -> RTCRuntimeStats:
+    """Summarize whether RTC still has effective overlap at chunk handoff.
+
+    `overlap_l2_before` compares raw (normalized) overlap, while
+    `overlap_l2_after` compares processed/executed overlap after all runtime
+    transforms applied to the chunk.
+    """
+    real_delay = max(int(real_delay), 0)
+    leftover_len_at_send = max(int(leftover_len_at_send), 0)
+    rtc_execution_horizon = max(int(rtc_execution_horizon), 0)
+    action_index_before_inference = max(int(action_index_before_inference), 0)
+
+    raw_overlap_len, raw_overlap_l2 = _compute_overlap_l2(prev_raw_left_over, new_raw_actions, real_delay)
+    processed_overlap_len, processed_overlap_l2 = _compute_overlap_l2(
+        prev_processed_left_over,
+        new_processed_actions,
+        real_delay,
+    )
+    effective_guided_steps = max(0, min(leftover_len_at_send, rtc_execution_horizon) - real_delay)
+    overlap_len = processed_overlap_len if processed_overlap_len > 0 else raw_overlap_len
+
+    return RTCRuntimeStats(
+        action_index_before_inference=action_index_before_inference,
+        leftover_len_at_send=leftover_len_at_send,
+        real_delay=real_delay,
+        rtc_execution_horizon=rtc_execution_horizon,
+        effective_guided_steps=effective_guided_steps,
+        overlap_len=overlap_len,
+        overlap_l2_before=raw_overlap_l2,
+        overlap_l2_after=processed_overlap_l2,
+    )
+
+
+def format_rtc_runtime_stats(stats: RTCRuntimeStats, *, chunk_idx: int | None = None) -> str:
+    """Format RTC runtime diagnostics for always-visible terminal output."""
+
+    prefix = "  RTC result:" if chunk_idx is None else f"  RTC result #{chunk_idx}:"
+    overlap_l2_before = "n/a" if stats.overlap_l2_before is None else f"{stats.overlap_l2_before:.6f}"
+    overlap_l2_after = "n/a" if stats.overlap_l2_after is None else f"{stats.overlap_l2_after:.6f}"
+    return (
+        f"{prefix} action_index_before_inference={stats.action_index_before_inference} "
+        f"leftover_len_at_send={stats.leftover_len_at_send} "
+        f"real_delay={stats.real_delay} "
+        f"rtc_execution_horizon={stats.rtc_execution_horizon} "
+        f"effective_guided_steps={stats.effective_guided_steps} "
+        f"overlap={stats.overlap_len} "
+        f"overlap_l2_before={overlap_l2_before} "
+        f"overlap_l2_after={overlap_l2_after}"
+    )
+
+
+def get_rtc_boundary_risks(stats: RTCRuntimeStats) -> list[str]:
+    """Summarize RTC boundary risks in user-facing wording."""
+
+    reasons: list[str] = []
+    if stats.leftover_len_at_send > 0 and stats.real_delay >= stats.leftover_len_at_send:
+        reasons.append("delay exhausted leftover tail before the new chunk arrived")
+    if stats.rtc_execution_horizon > 0 and stats.real_delay >= stats.rtc_execution_horizon:
+        reasons.append("delay exceeded rtc_execution_horizon")
+    if stats.effective_guided_steps <= 0:
+        reasons.append("no effective guided steps remain at the executed boundary")
+    return reasons
+
+
+def apply_rtc_guidance(
+    *,
+    x_t: torch.Tensor,
+    prev_chunk_left_over: torch.Tensor | np.ndarray | None,
+    inference_delay: int,
+    time: float | torch.Tensor,
+    original_denoise_step_partial: Callable[[torch.Tensor], torch.Tensor],
+    rtc_config: RTCConfig,
+    num_flow_matching_steps: int,
+    execution_horizon: int | None = None,
+) -> torch.Tensor:
+    """Apply RTC guidance to one denoising step.
+
+    This mirrors lerobot's RTCProcessor.denoise_step() behavior for the PyTorch
+    OpenPI path so it can be tested independently from the model.
+    """
+    if prev_chunk_left_over is None or not rtc_config.enabled:
+        return original_denoise_step_partial(x_t)
+
+    tau = 1 - time
+    x_t = x_t.clone().detach()
+
+    squeezed = False
+    if x_t.ndim < 3:
+        x_t = x_t.unsqueeze(0)
+        squeezed = True
+
+    if isinstance(prev_chunk_left_over, np.ndarray):
+        prev_chunk_left_over = torch.from_numpy(prev_chunk_left_over)
+    prev_chunk_left_over = prev_chunk_left_over.to(dtype=torch.float32, device=x_t.device)
+    if prev_chunk_left_over.ndim < 3:
+        prev_chunk_left_over = prev_chunk_left_over.unsqueeze(0)
+
+    if execution_horizon is None:
+        execution_horizon = rtc_config.execution_horizon
+    execution_horizon = min(execution_horizon, prev_chunk_left_over.shape[1])
+
+    batch_size, action_chunk_size, action_dim = x_t.shape
+    if prev_chunk_left_over.shape[1] < action_chunk_size or prev_chunk_left_over.shape[2] < action_dim:
+        padded = torch.zeros(batch_size, action_chunk_size, action_dim, dtype=torch.float32, device=x_t.device)
+        padded[:, : prev_chunk_left_over.shape[1], : prev_chunk_left_over.shape[2]] = prev_chunk_left_over
+        prev_chunk_left_over = padded
+
+    weights = (
+        get_prefix_weights(
+            inference_delay,
+            execution_horizon,
+            action_chunk_size,
+            schedule=rtc_config.prefix_attention_schedule,
+        )
+        .to(x_t.device)
+        .unsqueeze(0)
+        .unsqueeze(-1)
+    )
+
+    time_tensor = torch.as_tensor(time, dtype=torch.float32, device=x_t.device)
+    with torch.enable_grad():
+        x_t.requires_grad_(True)
+        v_t = original_denoise_step_partial(x_t)
+        x1_t = x_t - time_tensor * v_t
+        err = (prev_chunk_left_over - x1_t) * weights
+        correction = err
+        if not rtc_config.full_trajectory_alignment:
+            correction = torch.autograd.grad(x1_t, x_t, err.detach().clone(), retain_graph=False)[0]
+
+    max_guidance_weight = rtc_config.max_guidance_weight
+    if max_guidance_weight is None:
+        max_guidance_weight = num_flow_matching_steps
+
+    max_guidance_weight = torch.as_tensor(max_guidance_weight, dtype=torch.float32, device=x_t.device)
+    tau_tensor = torch.as_tensor(tau, dtype=torch.float32, device=x_t.device)
+    squared_one_minus_tau = (1 - tau_tensor) ** 2
+    prior_variance = torch.as_tensor(rtc_config.sigma_d**2, dtype=torch.float32, device=x_t.device)
+    inv_r2 = (squared_one_minus_tau + tau_tensor**2 * prior_variance) / (squared_one_minus_tau * prior_variance)
+    c = torch.nan_to_num((1 - tau_tensor) / tau_tensor, posinf=max_guidance_weight)
+    guidance_weight = torch.nan_to_num(c * inv_r2, posinf=max_guidance_weight)
+    guidance_weight = torch.minimum(guidance_weight, max_guidance_weight)
+
+    result = v_t - guidance_weight * correction
+    if squeezed:
+        result = result.squeeze(0)
+    return result
+
+
+class RTCActionQueue:
+    """Track raw and processed action chunks for RTC-style async execution."""
+
+    def __init__(self, enabled: bool):
+        self.enabled = enabled
+        self.queue: np.ndarray | None = None
+        self.original_queue: np.ndarray | None = None
+        self.last_index = 0
+
+    def get(self) -> np.ndarray | None:
+        if self.queue is None or self.last_index >= len(self.queue):
+            return None
+        action = self.queue[self.last_index].copy()
+        self.last_index += 1
+        return action
+
+    def empty(self) -> bool:
+        return self.qsize() <= 0
+
+    def qsize(self) -> int:
+        if self.queue is None:
+            return 0
+        return len(self.queue) - self.last_index
+
+    def get_action_index(self) -> int:
+        return self.last_index
+
+    def get_left_over(self) -> np.ndarray | None:
+        if self.original_queue is None:
+            return None
+        return self.original_queue[self.last_index :].copy()
+
+    def get_processed_left_over(self) -> np.ndarray | None:
+        if self.queue is None:
+            return None
+        return self.queue[self.last_index :].copy()
+
+    def merge(
+        self,
+        original_actions: np.ndarray,
+        processed_actions: np.ndarray,
+        real_delay: int,
+        action_index_before_inference: int | None = 0,
+    ) -> None:
+        self._check_delays(real_delay, action_index_before_inference)
+
+        if self.enabled:
+            self.original_queue = np.asarray(original_actions)[real_delay:].copy()
+            self.queue = np.asarray(processed_actions)[real_delay:].copy()
+            self.last_index = 0
+            return
+
+        if self.queue is None:
+            self.original_queue = np.asarray(original_actions).copy()
+            self.queue = np.asarray(processed_actions).copy()
+            self.last_index = 0
+            return
+
+        self.original_queue = np.concatenate([self.original_queue, np.asarray(original_actions)], axis=0)
+        self.original_queue = self.original_queue[self.last_index :].copy()
+        self.queue = np.concatenate([self.queue, np.asarray(processed_actions)], axis=0)
+        self.queue = self.queue[self.last_index :].copy()
+        self.last_index = 0
+
+    def _check_delays(self, real_delay: int, action_index_before_inference: int | None) -> None:
+        if action_index_before_inference is None:
+            return
+        indexes_diff = self.last_index - action_index_before_inference
+        if indexes_diff != real_delay:
+            raise ValueError(
+                f"Action queue delay mismatch: indexes diff {indexes_diff} != real delay {real_delay}"
+            )

@@ -14,7 +14,11 @@ from scripts.numpy_logger import NumpyCSVLogger
 
 from openpi.policies import policy_config as _policy_config
 from openpi.models.tokenizer import PaligemmaTokenizer
+from openpi.models_pytorch.rtc_utils import RTCActionQueue
 from openpi.models_pytorch.rtc_utils import RTCConfig
+from openpi.models_pytorch.rtc_utils import compute_rtc_runtime_stats
+from openpi.models_pytorch.rtc_utils import format_rtc_runtime_stats
+from openpi.models_pytorch.rtc_utils import get_rtc_boundary_risks
 from openpi.training import config as _config
 from third_party.agilex.agilexfollower import AlohaAgileXFollower
 from third_party.agilex.agilexconfig import AlohaAgileXFollowerConfig
@@ -345,14 +349,20 @@ def main():
             execution_horizon=args.rtc_execution_horizon,
             sigma_d=args.rtc_sigma_d,
         )
-        # RTC and transition smoothing are complementary:
-        #   RTC = model-level consistency (during denoising)
-        #   smooth_type = execution-level chunk transition (cubic/ema/etc.)
-        # Both can be used together. User controls smooth_type independently.
+        if args.smooth_type != "none":
+            logging.warning("RTC enabled: forcing smooth_type=none for isolated RTC validation")
+            args.smooth_type = "none"
+        if args.horizon_smooth != "none":
+            logging.warning("RTC enabled: forcing horizon_smooth=none for isolated RTC validation")
+            args.horizon_smooth = "none"
+        if args.qp_lambda_acc and args.qp_lambda_acc > 0:
+            logging.warning("RTC enabled: forcing qp_lambda_acc=0 for isolated RTC validation")
+            args.qp_lambda_acc = 0.0
+        if args.align_mode != "step":
+            logging.warning("RTC enabled: forcing align_mode=step")
+            args.align_mode = "step"
         logging.info(f"RTC enabled: {rtc_config}")
         logging.info(f"smooth_type={args.smooth_type}, horizon_smooth={args.horizon_smooth}")
-
-    last_raw_action_vals = None  # stores raw model output for RTC prev_actions
 
     set_seeds(args.seed)
 
@@ -408,7 +418,12 @@ def main():
     tokenizer = PaligemmaTokenizer()
     tokenized, mask = tokenizer.tokenize(prompt)
 
-    action_queue = collections.deque()  # 存储当前动作序列
+    if rtc_enabled:
+        action_queue = RTCActionQueue(enabled=True)
+        rtc_delay_estimate = 0
+        inflight_rtc_request = None
+    else:
+        action_queue = collections.deque()  # 存储当前动作序列
     waiting_for_infer = False
     action_step_counter = 0  # 记录已执行的动作步数
     first = True
@@ -443,7 +458,14 @@ def main():
             obs["token_loss_mask"] = None
             # send anchor (first pending action) to worker so it can align/anchor optimization
             anchor = None
-            if len(action_queue) > 0:
+            if rtc_enabled:
+                pending_actions = action_queue.get_processed_left_over()
+                if pending_actions is not None and len(pending_actions) > 0:
+                    try:
+                        anchor = np.asarray(pending_actions[0], dtype=float)
+                    except Exception:
+                        anchor = None
+            elif len(action_queue) > 0:
                 try:
                     anchor = np.asarray(action_queue[0], dtype=float)
                 except Exception:
@@ -451,19 +473,26 @@ def main():
             # Prepare RTC context if enabled
             rtc_ctx = None
             if rtc_enabled:
-                if last_raw_action_vals is not None:
-                    rtc_ctx = {
-                        "rtc_config": rtc_config,
-                        "prev_actions": last_raw_action_vals,
-                        "inference_delay": action_step_counter,
-                    }
-                else:
-                    # First step: pass config but no prev_actions (guidance will be skipped)
-                    rtc_ctx = {
-                        "rtc_config": rtc_config,
-                        "prev_actions": None,
-                        "inference_delay": 0,
-                    }
+                prev_actions = action_queue.get_left_over()
+                action_index_before_inference = action_queue.get_action_index()
+                leftover_len_at_send = 0 if prev_actions is None else len(prev_actions)
+                inflight_rtc_request = {
+                    "action_index_before_inference": action_index_before_inference,
+                    "leftover_len_at_send": leftover_len_at_send,
+                }
+                rtc_ctx = {
+                    "rtc_config": rtc_config,
+                    "prev_actions": prev_actions,
+                    "inference_delay": rtc_delay_estimate,
+                }
+                logging.debug(
+                    "RTC request #%s: action_index_before_inference=%s, leftover_len_at_send=%s, delay_estimate=%s, prev_actions=%s",
+                    sent_idx,
+                    action_index_before_inference,
+                    leftover_len_at_send,
+                    rtc_delay_estimate,
+                    "set" if prev_actions is not None else "none",
+                )
             try:
                 if rtc_ctx is not None:
                     in_q.put_nowait((sent_idx, obs, anchor, rtc_ctx))
@@ -473,6 +502,8 @@ def main():
                 waiting_for_infer = True
                 action_step_counter = 0
             except mp.queues.Full:
+                if rtc_enabled:
+                    inflight_rtc_request = None
                 logging.debug("inference queue full, dropping frame")
 
         # 2. 如果有新推理结果，立即清空并更新 action_queue
@@ -483,100 +514,147 @@ def main():
             recv_idx = idx
             logging.debug(f"got result #{recv_idx}")
 
-            # Save raw model output for next RTC iteration (before any post-processing)
-            if rtc_enabled and raw_action_vals is not None:
-                last_raw_action_vals = raw_action_vals.copy()
+            if rtc_enabled:
+                if action_vals is None:
+                    logging.warning("RTC result missing actions; skipping queue update")
+                    waiting_for_infer = False
+                    inflight_rtc_request = None
+                else:
+                    if raw_action_vals is None:
+                        raw_action_vals = action_vals
 
-            # 1. 记录未执行的旧动作
-            old_actions = list(action_queue)
-            action_queue.clear()
+                    action_index_before_inference = 0
+                    leftover_len_at_send = 0
+                    if inflight_rtc_request is not None:
+                        action_index_before_inference = inflight_rtc_request["action_index_before_inference"]
+                        leftover_len_at_send = inflight_rtc_request["leftover_len_at_send"]
 
-            # 2. 新推理动作起点
-            if args.align_mode == "step":
-                start_idx = action_step_counter
-            elif args.align_mode == "euclidean" and len(old_actions) > 0 and len(action_vals) > 0:
-                # 取旧队列第一个动作，与新动作序列做欧氏距离最小匹配
-                old_action = old_actions[0]
-                dists = np.linalg.norm(action_vals - old_action, axis=1)
-                start_idx = int(np.argmin(dists))
+                    old_raw_actions_arr = action_queue.get_left_over()
+                    old_actions_arr = action_queue.get_processed_left_over()
+                    real_delay = max(action_queue.get_action_index() - action_index_before_inference, 0)
+                    rtc_delay_estimate = real_delay
+                    new_actions = np.asarray(action_vals)
+                    raw_action_vals = np.asarray(raw_action_vals)
+                    rtc_stats = compute_rtc_runtime_stats(
+                        prev_raw_left_over=old_raw_actions_arr,
+                        prev_processed_left_over=old_actions_arr,
+                        new_raw_actions=raw_action_vals,
+                        new_processed_actions=new_actions,
+                        real_delay=real_delay,
+                        leftover_len_at_send=leftover_len_at_send,
+                        rtc_execution_horizon=args.rtc_execution_horizon,
+                        action_index_before_inference=action_index_before_inference,
+                    )
+
+                    print(format_rtc_runtime_stats(rtc_stats, chunk_idx=recv_idx), flush=True)
+                    warning_reasons = get_rtc_boundary_risks(rtc_stats)
+                    if warning_reasons:
+                        print(f"  RTC boundary risk: {'; '.join(warning_reasons)}", flush=True)
+
+                    action_queue.merge(
+                        raw_action_vals,
+                        new_actions,
+                        real_delay=real_delay,
+                        action_index_before_inference=action_index_before_inference,
+                    )
+                    waiting_for_infer = False
+                    inflight_rtc_request = None
             else:
-                start_idx = 0
-            new_actions = action_vals[start_idx:]
-            # 对新推理得到的 horizon 做时序平滑（因为 horizon 是完整的未来序列，可以使用中心/非因果平滑）
-            try:
-                if args.horizon_smooth != "none" and len(new_actions) > 0:
-                    arr = np.asarray(new_actions, dtype=float)
-                    if arr.ndim == 1:
-                        arr = arr[None, :]
-                    H, D = arr.shape
-                    if D >= 2:
-                        body = arr[:, :-1]
-                        grip = arr[:, -1:]
-                    else:
-                        body = arr
-                        grip = None
-                    if body.size > 0:
-                        try:
-                            body = smooth_horizon(body, method=args.horizon_smooth, window=args.horizon_window, ema_alpha=args.horizon_ema_alpha)
-                        except Exception:
-                            logging.exception("main horizon smoothing failed")
-                    new_actions = np.concatenate([body, grip], axis=1) if grip is not None else body
-            except Exception as e:
-                logging.exception("horizon smoothing failed, falling back to raw predictions: %s", e)
+                # 1. 记录未执行的旧动作
+                old_actions = list(action_queue)
+                action_queue.clear()
 
-            # 可选：对整个 horizon 做 QP-style 优化以最小化二阶差分（加速度）
-            try:
-                if args.qp_lambda_acc and args.qp_lambda_acc > 0 and len(new_actions) > 0:
-                    # anchor 使用当前队列第一个动作（若有）以保证前端对齐
-                    anchor = None
-                    if len(old_actions) > 0:
-                        try:
-                            anchor = np.asarray(old_actions[0], dtype=float)
-                        except Exception:
-                            anchor = None
-                    arr = np.asarray(new_actions, dtype=float)
-                    if arr.ndim == 1:
-                        arr = arr[None, :]
-                    H, D = arr.shape
-                    if D >= 2:
-                        body = arr[:, :-1]
-                        grip = arr[:, -1:]
-                    else:
-                        body = arr
-                        grip = None
-                    if body.size > 0:
-                        try:
-                            body = optimize_horizon_qp(body, lambda_acc=args.qp_lambda_acc, velocity_limit=args.qp_velocity_limit, anchor=anchor)
-                        except Exception as e:
-                            logging.exception("main qp optimization failed: %s", e)
-                    new_actions = np.concatenate([body, grip], axis=1) if grip is not None else body
-            except Exception as e:
-                logging.exception("qp horizon optimization failed, falling back to pre-qped predictions: %s", e)
+                # 2. 新推理动作起点
+                if args.align_mode == "step":
+                    start_idx = action_step_counter
+                elif args.align_mode == "euclidean" and len(old_actions) > 0 and len(action_vals) > 0:
+                    # 取旧队列第一个动作，与新动作序列做欧氏距离最小匹配
+                    old_action = old_actions[0]
+                    dists = np.linalg.norm(action_vals - old_action, axis=1)
+                    start_idx = int(np.argmin(dists))
+                else:
+                    start_idx = 0
+                new_actions = action_vals[start_idx:]
+                # 对新推理得到的 horizon 做时序平滑（因为 horizon 是完整的未来序列，可以使用中心/非因果平滑）
+                try:
+                    if args.horizon_smooth != "none" and len(new_actions) > 0:
+                        arr = np.asarray(new_actions, dtype=float)
+                        if arr.ndim == 1:
+                            arr = arr[None, :]
+                        H, D = arr.shape
+                        if D >= 2:
+                            body = arr[:, :-1]
+                            grip = arr[:, -1:]
+                        else:
+                            body = arr
+                            grip = None
+                        if body.size > 0:
+                            try:
+                                body = smooth_horizon(body, method=args.horizon_smooth, window=args.horizon_window, ema_alpha=args.horizon_ema_alpha)
+                            except Exception:
+                                logging.exception("main horizon smoothing failed")
+                        new_actions = np.concatenate([body, grip], axis=1) if grip is not None else body
+                except Exception as e:
+                    logging.exception("horizon smoothing failed, falling back to raw predictions: %s", e)
 
-            # 3. 平滑衔接（可通过参数切换）
-            if args.smooth_type == "none":
-                # No chunk-to-chunk transition smoothing (e.g. when RTC handles it)
-                smooth_actions = list(new_actions)
-            elif args.smooth_type == "linear":
-                smooth_actions = linear_transition(old_actions, new_actions)
-            elif args.smooth_type == "cubic":
-                smooth_actions = cubic_transition(old_actions, new_actions)
-            elif args.smooth_type == "quintic":
-                smooth_actions = quintic_transition(old_actions, new_actions)
-            elif args.smooth_type == "ema":
-                smooth_actions = ema_transition(old_actions, new_actions, alpha=args.ema_alpha)
-            else:
-                raise ValueError(f"Unknown smooth_type: {args.smooth_type}")
-            for a in smooth_actions:
-                action_queue.append(a)
+                # 可选：对整个 horizon 做 QP-style 优化以最小化二阶差分（加速度）
+                try:
+                    if args.qp_lambda_acc and args.qp_lambda_acc > 0 and len(new_actions) > 0:
+                        # anchor 使用当前队列第一个动作（若有）以保证前端对齐
+                        anchor = None
+                        if len(old_actions) > 0:
+                            try:
+                                anchor = np.asarray(old_actions[0], dtype=float)
+                            except Exception:
+                                anchor = None
+                        arr = np.asarray(new_actions, dtype=float)
+                        if arr.ndim == 1:
+                            arr = arr[None, :]
+                        H, D = arr.shape
+                        if D >= 2:
+                            body = arr[:, :-1]
+                            grip = arr[:, -1:]
+                        else:
+                            body = arr
+                            grip = None
+                        if body.size > 0:
+                            try:
+                                body = optimize_horizon_qp(body, lambda_acc=args.qp_lambda_acc, velocity_limit=args.qp_velocity_limit, anchor=anchor)
+                            except Exception as e:
+                                logging.exception("main qp optimization failed: %s", e)
+                        new_actions = np.concatenate([body, grip], axis=1) if grip is not None else body
+                except Exception as e:
+                    logging.exception("qp horizon optimization failed, falling back to pre-qped predictions: %s", e)
 
-            waiting_for_infer = False
+                # 3. 平滑衔接（可通过参数切换）
+                if args.smooth_type == "none":
+                    # No chunk-to-chunk transition smoothing (e.g. when RTC handles it)
+                    smooth_actions = list(new_actions)
+                elif args.smooth_type == "linear":
+                    smooth_actions = linear_transition(old_actions, new_actions)
+                elif args.smooth_type == "cubic":
+                    smooth_actions = cubic_transition(old_actions, new_actions)
+                elif args.smooth_type == "quintic":
+                    smooth_actions = quintic_transition(old_actions, new_actions)
+                elif args.smooth_type == "ema":
+                    smooth_actions = ema_transition(old_actions, new_actions, alpha=args.ema_alpha)
+                else:
+                    raise ValueError(f"Unknown smooth_type: {args.smooth_type}")
+                for a in smooth_actions:
+                    action_queue.append(a)
+
+                waiting_for_infer = False
         except mp.queues.Empty:
             pass
 
         # 3. 如果 action_queue 有动作，发给 robot
-        if action_queue:
-            action_to_send = action_queue.popleft()
+        if rtc_enabled:
+            action_to_send = action_queue.get()
+            has_action = action_to_send is not None
+        else:
+            has_action = bool(action_queue)
+            action_to_send = action_queue.popleft() if has_action else None
+        if has_action:
             if print_log:
                 logger.log(action_to_send[:7])
             robot.send_action_np(action_to_send[:7])
