@@ -7,7 +7,5 @@ python scripts/inference_smooth_0912.py \
   --cameras '{camera0: {type: orbbec, index_or_path: CP0H953001CP, width: 640, height: 480, fps: 30}, camera1: {type: orbbec, index_or_path: CP02653000TL, width: 640, height: 480, fps: 30}}' \
   --action_steps 20 \
   --fps 20 \
-  --rtc_enable \
-  --rtc_execution_horizon 45 \
   --horizon_smooth none \
   --mode pose
