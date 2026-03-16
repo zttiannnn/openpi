@@ -10,15 +10,26 @@ import collections
 import yaml
 import random
 import os
+import pathlib
 from scripts.numpy_logger import NumpyCSVLogger
 
 from openpi.policies import policy_config as _policy_config
 from openpi.models.tokenizer import PaligemmaTokenizer
 from openpi.models_pytorch.rtc_utils import RTCActionQueue
 from openpi.models_pytorch.rtc_utils import RTCConfig
+from openpi.models_pytorch.rtc_utils import compute_action_chunk_stats
+from openpi.models_pytorch.rtc_utils import compute_action_chunk_joint_stats
 from openpi.models_pytorch.rtc_utils import compute_rtc_runtime_stats
+from openpi.models_pytorch.rtc_utils import compute_boundary_jump_stats
+from openpi.models_pytorch.rtc_utils import blend_action_chunks
+from openpi.models_pytorch.rtc_utils import format_action_chunk_joint_stats
+from openpi.models_pytorch.rtc_utils import format_action_chunk_stats
+from openpi.models_pytorch.rtc_utils import format_action_array_preview
+from openpi.models_pytorch.rtc_utils import format_boundary_jump_stats
+from openpi.models_pytorch.rtc_utils import format_checkpoint_action_norm_stats
 from openpi.models_pytorch.rtc_utils import format_rtc_runtime_stats
 from openpi.models_pytorch.rtc_utils import get_rtc_boundary_risks
+from openpi.shared import normalize as _normalize
 from openpi.training import config as _config
 from third_party.agilex.agilexfollower import AlohaAgileXFollower
 from third_party.agilex.agilexconfig import AlohaAgileXFollowerConfig
@@ -44,6 +55,43 @@ def make_camera_config(cfg: dict):
     else:
         raise ValueError(f"Unsupported camera type: {t!r}")
 
+
+def print_action_diagnostics(
+    *,
+    actions,
+    range_label: str,
+    chunk_label: str,
+    chunk_joint_label: str,
+    preview_label: str,
+    state=None,
+    joint_dims: int = 6,
+    print_arrays: bool = False,
+    print_array_rows: int = 3,
+):
+    """Print range, smoothness stats, and optional array preview for one action stage."""
+
+    if actions is None:
+        return
+
+    action_arr = np.asarray(actions)
+    if action_arr.ndim == 1:
+        action_arr = action_arr[None, :]
+
+    print(f"  {range_label} range: [{action_arr.min():.4f}, {action_arr.max():.4f}], shape={action_arr.shape}")
+    chunk_stats = compute_action_chunk_stats(action_arr, state=state, joint_dims=joint_dims)
+    print(format_action_chunk_stats(chunk_stats, label=chunk_label), flush=True)
+    chunk_joint_stats = compute_action_chunk_joint_stats(action_arr, state=state, joint_dims=joint_dims)
+    print(format_action_chunk_joint_stats(chunk_joint_stats, label=chunk_joint_label), flush=True)
+    if print_arrays:
+        print(
+            format_action_array_preview(
+                action_arr,
+                label=preview_label,
+                max_rows=print_array_rows,
+            ),
+            flush=True,
+        )
+
 # ---------- 子进程：推理循环 ----------
 def inference_worker(
     in_q: mp.Queue,
@@ -52,6 +100,17 @@ def inference_worker(
     checkpoint_dir,
     args,
 ):
+    checkpoint_dir = pathlib.Path(checkpoint_dir)
+    for candidate in (checkpoint_dir / "openpi_stats", checkpoint_dir / "assets" / "openpi_stats"):
+        if candidate.exists():
+            try:
+                checkpoint_norm_stats = _normalize.load(candidate)
+                formatted_stats = format_checkpoint_action_norm_stats(checkpoint_norm_stats, joint_dims=6)
+                if formatted_stats is not None:
+                    print(formatted_stats, flush=True)
+            except Exception:
+                logging.exception("failed to load checkpoint norm stats from %s", candidate)
+            break
 
     # 1. 只在该进程里加载一次模型 / CUDA
     policy = _policy_config.create_trained_policy(config, checkpoint_dir)
@@ -83,7 +142,8 @@ def inference_worker(
         result = policy.infer(obs, **infer_kwargs)
         infer_time = time.time() - start_time
         print(f"Step {idx}: infer time = {infer_time:.4f} seconds")
-        actions = result.get("actions")
+        policy_actions = result.get("actions")
+        actions = policy_actions
         # Get raw (normalized) model output for RTC prev_actions — this is pre-transform
         raw_actions = result.get("raw_actions")  # normalized, in model output space
         # ── RTC Debug ──
@@ -91,10 +151,28 @@ def inference_worker(
             print(f"  RTC: inference_delay={rtc_context.get('inference_delay')}, "
                   f"prev_actions={'set' if rtc_context.get('prev_actions') is not None else 'None'}")
         if raw_actions is not None:
-            print(f"  raw_actions (normalized) range: [{raw_actions.min():.4f}, {raw_actions.max():.4f}], shape={raw_actions.shape}")
-        if actions is not None:
-            act_arr = np.asarray(actions)
-            print(f"  actions (denormalized) range: [{act_arr.min():.1f}, {act_arr.max():.1f}], shape={act_arr.shape}")
+            print_action_diagnostics(
+                actions=raw_actions,
+                range_label="raw_actions (normalized)",
+                chunk_label="raw_chunk",
+                chunk_joint_label="raw_chunk_joint",
+                preview_label="raw_actions_preview",
+                joint_dims=6,
+                print_arrays=args.print_action_arrays,
+                print_array_rows=args.print_action_array_rows,
+            )
+        if policy_actions is not None:
+            print_action_diagnostics(
+                actions=policy_actions,
+                range_label="policy_actions (denormalized, pre_postprocess)",
+                chunk_label="policy_chunk",
+                chunk_joint_label="policy_chunk_joint",
+                preview_label="policy_actions_preview",
+                state=obs.get("state"),
+                joint_dims=6,
+                print_arrays=args.print_action_arrays,
+                print_array_rows=args.print_action_array_rows,
+            )
         # perform horizon-level smoothing and optional QP optimization in worker
         try:
             if actions is not None:
@@ -131,41 +209,56 @@ def inference_worker(
                     actions = np.concatenate([body, grip], axis=1)
         except Exception as e:
             logging.exception("worker horizon postprocessing failed, falling back to raw actions: %s", e)
+        if actions is not None:
+            print_action_diagnostics(
+                actions=actions,
+                range_label="worker_actions (postprocess)",
+                chunk_label="worker_chunk",
+                chunk_joint_label="worker_chunk_joint",
+                preview_label="worker_actions_preview",
+                state=obs.get("state"),
+                joint_dims=6,
+                print_arrays=args.print_action_arrays,
+                print_array_rows=args.print_action_array_rows,
+            )
         out_q.put((idx, actions, raw_actions))
 
-def _apply_transition(old_actions, new_actions, h_fn):
-    """
-    通用 transition 应用器：对前 n_interp 个旧动作与新动作按权重 h(t) 做插值。
-    h_fn: 接受 t in (0,1) 返回权重 h(t) 的函数，interp = (1-h)*old + h*new。
-    返回 list[np.ndarray]
-    """
-    n_old = len(old_actions)
-    n_interp = min(n_old, len(new_actions))
-    result = []
-    for i_interp in range(n_interp):
-        t = (i_interp + 1) / (n_interp + 1)
-        h = float(h_fn(t))
-        interp_action = (1 - h) * old_actions[i_interp] + h * new_actions[i_interp]
-        result.append(interp_action)
-    for a in new_actions[n_interp:]:
-        result.append(a)
-    return result
-
-def linear_transition(old_actions, new_actions):
+def linear_transition(old_actions, new_actions, max_transition_steps: int = 0):
     """线性插值：h(t)=t"""
-    return _apply_transition(old_actions, new_actions, lambda t: t)
+    return list(
+        blend_action_chunks(
+            old_actions=old_actions,
+            new_actions=new_actions,
+            curve="linear",
+            max_transition_steps=max_transition_steps,
+        )
+    )
 
 
-def cubic_transition(old_actions, new_actions):
+def cubic_transition(old_actions, new_actions, max_transition_steps: int = 0):
     """三次 Hermite ease-in/out：h(t)=3t^2-2t^3"""
-    return _apply_transition(old_actions, new_actions, lambda t: 3 * t**2 - 2 * t**3)
+    return list(
+        blend_action_chunks(
+            old_actions=old_actions,
+            new_actions=new_actions,
+            curve="cubic",
+            max_transition_steps=max_transition_steps,
+        )
+    )
 
 
-def quintic_transition(old_actions, new_actions):
+def quintic_transition(old_actions, new_actions, max_transition_steps: int = 0):
     """五次平滑：h(t)=10t^3-15t^4+6t^5"""
-    return _apply_transition(old_actions, new_actions, lambda t: 10 * t**3 - 15 * t**4 + 6 * t**5)
+    return list(
+        blend_action_chunks(
+            old_actions=old_actions,
+            new_actions=new_actions,
+            curve="quintic",
+            max_transition_steps=max_transition_steps,
+        )
+    )
 
-def ema_transition(old_actions, new_actions, alpha=0.7):
+def ema_transition(old_actions, new_actions, alpha=0.7, max_transition_steps: int = 0):
     """
     指数加权平滑(EMA)，返回平滑后的动作序列。
     old_actions: list[np.ndarray]，未执行的旧动作
@@ -173,15 +266,15 @@ def ema_transition(old_actions, new_actions, alpha=0.7):
     alpha: 新动作权重,0~1
     返回:list[np.ndarray]，平滑衔接后的动作序列
     """
-    n_old = len(old_actions)
-    n_interp = min(n_old, len(new_actions))
-    result = []
-    for i_interp in range(n_interp):
-        interp_action = alpha * new_actions[i_interp] + (1 - alpha) * old_actions[i_interp]
-        result.append(interp_action)
-    for a in new_actions[n_interp:]:
-        result.append(a)
-    return result
+    return list(
+        blend_action_chunks(
+            old_actions=old_actions,
+            new_actions=new_actions,
+            curve="ema",
+            ema_alpha=alpha,
+            max_transition_steps=max_transition_steps,
+        )
+    )
 
 def smooth_horizon(actions: np.ndarray, method: str = "none", window: int = 3, ema_alpha: float = 0.9):
     """
@@ -318,11 +411,14 @@ def main():
     parser.add_argument("--action_steps", type=int, required=False, default=20, help="number of action steps to execute before next inference")
     parser.add_argument("--smooth_type", type=str, default="cubic", choices=["none", "linear", "cubic", "quintic", "ema"], help="动作平滑策略: none/linear/cubic/quintic/ema")
     parser.add_argument("--ema_alpha", type=float, default=0.5, help="EMA平滑时新动作权重alpha,0~1")
+    parser.add_argument("--transition_steps", type=int, default=0, help="仅对 chunk 边界前 N 步做 transition。0 表示沿用全 overlap transition")
     parser.add_argument("--align_mode", type=str, default="step", choices=["step", "euclidean"], help="新动作对齐方式: step(步数) 或 euclidean(欧氏距离)")
     # Horizon-level smoothing of the predicted action sequence (uses full predicted horizon)
     parser.add_argument("--horizon_smooth", type=str, default="ema", choices=["none", "moving", "median", "ema"], help="对预测 horizon 进行时序平滑: none/moving/median/ema")
     parser.add_argument("--horizon_window", type=int, default=30, help="窗口大小用于 moving/median 平滑（越大越平滑）。奇数优先")
     parser.add_argument("--horizon_ema_alpha", type=float, default=0.7, help="horizon EMA alpha 用于 horizon_smooth=ema")
+    parser.add_argument("--print_action_arrays", action="store_true", help="打印动作序列预览，便于对比模型原始输出、后处理输出和最终入队动作")
+    parser.add_argument("--print_action_array_rows", type=int, default=3, help="动作序列预览时打印的 head/tail 行数")
     # QP-style online optimizer options
     parser.add_argument("--qp_lambda_acc", type=float, default=0.0, help="二阶差分加速惩罚系数（>=0），qp优化时使用。0 表示禁用")
     parser.add_argument("--qp_velocity_limit", type=float, default=0.0, help="可选的每步最大速度（动作单位/step），>0 则启用简单束缚后处理")
@@ -350,13 +446,19 @@ def main():
             sigma_d=args.rtc_sigma_d,
         )
         if args.smooth_type != "none":
-            logging.warning("RTC enabled: forcing smooth_type=none for isolated RTC validation")
+            logging.warning(
+                "RTC enabled: forcing smooth_type=none because chunk-transition postprocessing would change the executed trajectory outside RTC's raw-action alignment."
+            )
             args.smooth_type = "none"
         if args.horizon_smooth != "none":
-            logging.warning("RTC enabled: forcing horizon_smooth=none for isolated RTC validation")
+            logging.warning(
+                "RTC enabled: forcing horizon_smooth=none because RTC guidance assumes the leftover tail matches model raw outputs; horizon postprocessing would break that correspondence."
+            )
             args.horizon_smooth = "none"
         if args.qp_lambda_acc and args.qp_lambda_acc > 0:
-            logging.warning("RTC enabled: forcing qp_lambda_acc=0 for isolated RTC validation")
+            logging.warning(
+                "RTC enabled: forcing qp_lambda_acc=0 because QP postprocessing would change the executed tail without feeding the same processed trajectory back into RTC."
+            )
             args.qp_lambda_acc = 0.0
         if args.align_mode != "step":
             logging.warning("RTC enabled: forcing align_mode=step")
@@ -427,6 +529,7 @@ def main():
     waiting_for_infer = False
     action_step_counter = 0  # 记录已执行的动作步数
     first = True
+    inflight_state_for_logging = None
 
     # robot.send_action_np(np.array([-7980, 20113, -2285, -7921, 37285,  1023,     0.]))
     # time.sleep(1)
@@ -501,6 +604,7 @@ def main():
                 sent_idx += 1
                 waiting_for_infer = True
                 action_step_counter = 0
+                inflight_state_for_logging = np.asarray(obs.get("state")).copy()
             except mp.queues.Full:
                 if rtc_enabled:
                     inflight_rtc_request = None
@@ -574,8 +678,19 @@ def main():
                     start_idx = int(np.argmin(dists))
                 else:
                     start_idx = 0
-                new_actions = action_vals[start_idx:]
-                # 对新推理得到的 horizon 做时序平滑（因为 horizon 是完整的未来序列，可以使用中心/非因果平滑）
+                new_actions = np.asarray(action_vals[start_idx:])
+                print_action_diagnostics(
+                    actions=new_actions,
+                    range_label="main_actions (aligned_from_worker)",
+                    chunk_label="main_aligned_chunk",
+                    chunk_joint_label="main_aligned_chunk_joint",
+                    preview_label="main_aligned_actions_preview",
+                    state=inflight_state_for_logging,
+                    joint_dims=6,
+                    print_arrays=args.print_action_arrays,
+                    print_array_rows=args.print_action_array_rows,
+                )
+                # 对齐/裁剪后仍会再做一次主线程后处理；单独保留日志，便于区分 worker 与 main 的影响。
                 try:
                     if args.horizon_smooth != "none" and len(new_actions) > 0:
                         arr = np.asarray(new_actions, dtype=float)
@@ -625,21 +740,54 @@ def main():
                         new_actions = np.concatenate([body, grip], axis=1) if grip is not None else body
                 except Exception as e:
                     logging.exception("qp horizon optimization failed, falling back to pre-qped predictions: %s", e)
+                print_action_diagnostics(
+                    actions=new_actions,
+                    range_label="main_actions (post_main_postprocess)",
+                    chunk_label="main_postprocess_chunk",
+                    chunk_joint_label="main_postprocess_chunk_joint",
+                    preview_label="main_postprocess_actions_preview",
+                    state=inflight_state_for_logging,
+                    joint_dims=6,
+                    print_arrays=args.print_action_arrays,
+                    print_array_rows=args.print_action_array_rows,
+                )
 
                 # 3. 平滑衔接（可通过参数切换）
                 if args.smooth_type == "none":
                     # No chunk-to-chunk transition smoothing (e.g. when RTC handles it)
                     smooth_actions = list(new_actions)
                 elif args.smooth_type == "linear":
-                    smooth_actions = linear_transition(old_actions, new_actions)
+                    smooth_actions = linear_transition(old_actions, new_actions, max_transition_steps=args.transition_steps)
                 elif args.smooth_type == "cubic":
-                    smooth_actions = cubic_transition(old_actions, new_actions)
+                    smooth_actions = cubic_transition(old_actions, new_actions, max_transition_steps=args.transition_steps)
                 elif args.smooth_type == "quintic":
-                    smooth_actions = quintic_transition(old_actions, new_actions)
+                    smooth_actions = quintic_transition(old_actions, new_actions, max_transition_steps=args.transition_steps)
                 elif args.smooth_type == "ema":
-                    smooth_actions = ema_transition(old_actions, new_actions, alpha=args.ema_alpha)
+                    smooth_actions = ema_transition(
+                        old_actions,
+                        new_actions,
+                        alpha=args.ema_alpha,
+                        max_transition_steps=args.transition_steps,
+                    )
                 else:
                     raise ValueError(f"Unknown smooth_type: {args.smooth_type}")
+                boundary_stats = compute_boundary_jump_stats(
+                    previous_action=old_actions[0] if len(old_actions) > 0 else None,
+                    next_action=smooth_actions[0] if len(smooth_actions) > 0 else None,
+                    joint_dims=6,
+                )
+                print(format_boundary_jump_stats(boundary_stats, label="queue_boundary"), flush=True)
+                print_action_diagnostics(
+                    actions=np.asarray(smooth_actions),
+                    range_label="queue_actions (post_transition)",
+                    chunk_label="queue_chunk",
+                    chunk_joint_label="queue_chunk_joint",
+                    preview_label="queue_actions_preview",
+                    state=inflight_state_for_logging,
+                    joint_dims=6,
+                    print_arrays=args.print_action_arrays,
+                    print_array_rows=args.print_action_array_rows,
+                )
                 for a in smooth_actions:
                     action_queue.append(a)
 

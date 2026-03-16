@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
+from openpi.shared.normalize import NormStats
 
 
 @dataclass
@@ -42,6 +43,41 @@ class RTCRuntimeStats:
     overlap_len: int
     overlap_l2_before: float | None
     overlap_l2_after: float | None
+
+
+@dataclass(frozen=True)
+class ActionChunkStats:
+    """Per-chunk smoothness diagnostics for action trajectories."""
+
+    joint_dims: int
+    state_to_first_l2: float | None
+    state_to_first_abs_max: float | None
+    step_delta_l2_mean: float | None
+    step_delta_l2_max: float | None
+    step_delta_abs_max: float | None
+    step_acc_l2_mean: float | None
+    step_acc_l2_max: float | None
+    step_acc_abs_max: float | None
+
+
+@dataclass(frozen=True)
+class ActionChunkJointStats:
+    """Joint-wise chunk diagnostics for first-step and smoothness analysis."""
+
+    joint_dims: int
+    state_to_first: np.ndarray | None
+    step_delta_abs_max: np.ndarray | None
+    step_acc_abs_max: np.ndarray | None
+
+
+@dataclass(frozen=True)
+class BoundaryJumpStats:
+    """Difference between the old queue head and the next queued action."""
+
+    joint_dims: int
+    delta: np.ndarray | None
+    l2: float | None
+    abs_max: float | None
 
 
 def get_prefix_weights(
@@ -206,6 +242,290 @@ def get_rtc_boundary_risks(stats: RTCRuntimeStats) -> list[str]:
     if stats.effective_guided_steps <= 0:
         reasons.append("no effective guided steps remain at the executed boundary")
     return reasons
+
+
+def compute_action_chunk_stats(
+    actions: np.ndarray | torch.Tensor,
+    *,
+    state: np.ndarray | torch.Tensor | None = None,
+    joint_dims: int = 6,
+) -> ActionChunkStats:
+    """Summarize first-step error, step deltas, and step accelerations for a chunk."""
+
+    action_arr = np.asarray(actions, dtype=np.float32)
+    if action_arr.ndim == 1:
+        action_arr = action_arr[None, :]
+
+    joint_dims = max(0, min(int(joint_dims), action_arr.shape[-1]))
+    joint_actions = action_arr[:, :joint_dims]
+
+    state_to_first_l2 = None
+    state_to_first_abs_max = None
+    if state is not None and joint_dims > 0:
+        state_arr = np.asarray(state, dtype=np.float32).reshape(-1)
+        if state_arr.shape[-1] >= joint_dims:
+            state_delta = joint_actions[0] - state_arr[:joint_dims]
+            state_to_first_l2 = float(np.linalg.norm(state_delta))
+            state_to_first_abs_max = float(np.max(np.abs(state_delta)))
+
+    step_delta_l2_mean = None
+    step_delta_l2_max = None
+    step_delta_abs_max = None
+    if len(joint_actions) >= 2 and joint_dims > 0:
+        step_deltas = np.diff(joint_actions, axis=0)
+        step_delta_l2 = np.linalg.norm(step_deltas, axis=1)
+        step_delta_l2_mean = float(np.mean(step_delta_l2))
+        step_delta_l2_max = float(np.max(step_delta_l2))
+        step_delta_abs_max = float(np.max(np.abs(step_deltas)))
+
+    step_acc_l2_mean = None
+    step_acc_l2_max = None
+    step_acc_abs_max = None
+    if len(joint_actions) >= 3 and joint_dims > 0:
+        step_acc = np.diff(joint_actions, n=2, axis=0)
+        step_acc_l2 = np.linalg.norm(step_acc, axis=1)
+        step_acc_l2_mean = float(np.mean(step_acc_l2))
+        step_acc_l2_max = float(np.max(step_acc_l2))
+        step_acc_abs_max = float(np.max(np.abs(step_acc)))
+
+    return ActionChunkStats(
+        joint_dims=joint_dims,
+        state_to_first_l2=state_to_first_l2,
+        state_to_first_abs_max=state_to_first_abs_max,
+        step_delta_l2_mean=step_delta_l2_mean,
+        step_delta_l2_max=step_delta_l2_max,
+        step_delta_abs_max=step_delta_abs_max,
+        step_acc_l2_mean=step_acc_l2_mean,
+        step_acc_l2_max=step_acc_l2_max,
+        step_acc_abs_max=step_acc_abs_max,
+    )
+
+
+def format_action_chunk_stats(stats: ActionChunkStats, *, label: str) -> str:
+    """Format chunk smoothness diagnostics for terminal output."""
+
+    def fmt(value: float | None) -> str:
+        return "n/a" if value is None else f"{value:.6f}"
+
+    return (
+        f"  {label}: joint_dims={stats.joint_dims} "
+        f"state_to_first_l2={fmt(stats.state_to_first_l2)} "
+        f"state_to_first_abs_max={fmt(stats.state_to_first_abs_max)} "
+        f"step_delta_l2_mean={fmt(stats.step_delta_l2_mean)} "
+        f"step_delta_l2_max={fmt(stats.step_delta_l2_max)} "
+        f"step_delta_abs_max={fmt(stats.step_delta_abs_max)} "
+        f"step_acc_l2_mean={fmt(stats.step_acc_l2_mean)} "
+        f"step_acc_l2_max={fmt(stats.step_acc_l2_max)} "
+        f"step_acc_abs_max={fmt(stats.step_acc_abs_max)}"
+    )
+
+
+def compute_action_chunk_joint_stats(
+    actions: np.ndarray | torch.Tensor,
+    *,
+    state: np.ndarray | torch.Tensor | None = None,
+    joint_dims: int = 6,
+) -> ActionChunkJointStats:
+    """Compute per-joint first-step gap and max delta/acceleration magnitudes."""
+
+    action_arr = np.asarray(actions, dtype=np.float32)
+    if action_arr.ndim == 1:
+        action_arr = action_arr[None, :]
+
+    joint_dims = max(0, min(int(joint_dims), action_arr.shape[-1]))
+    joint_actions = action_arr[:, :joint_dims]
+
+    state_to_first = None
+    if state is not None and joint_dims > 0:
+        state_arr = np.asarray(state, dtype=np.float32).reshape(-1)
+        if state_arr.shape[-1] >= joint_dims:
+            state_to_first = (joint_actions[0] - state_arr[:joint_dims]).astype(np.float32)
+
+    step_delta_abs_max = None
+    if len(joint_actions) >= 2 and joint_dims > 0:
+        step_delta_abs_max = np.max(np.abs(np.diff(joint_actions, axis=0)), axis=0).astype(np.float32)
+
+    step_acc_abs_max = None
+    if len(joint_actions) >= 3 and joint_dims > 0:
+        step_acc_abs_max = np.max(np.abs(np.diff(joint_actions, n=2, axis=0)), axis=0).astype(np.float32)
+
+    return ActionChunkJointStats(
+        joint_dims=joint_dims,
+        state_to_first=state_to_first,
+        step_delta_abs_max=step_delta_abs_max,
+        step_acc_abs_max=step_acc_abs_max,
+    )
+
+
+def _format_vector(values: np.ndarray | None) -> str:
+    if values is None:
+        return "n/a"
+    arr = np.asarray(values, dtype=np.float32).reshape(-1)
+    return "[" + ", ".join(f"{value:.6f}" for value in arr) + "]"
+
+
+def format_action_chunk_joint_stats(stats: ActionChunkJointStats, *, label: str) -> str:
+    """Format joint-wise chunk diagnostics for terminal output."""
+
+    return (
+        f"  {label}: joint_dims={stats.joint_dims} "
+        f"state_to_first={_format_vector(stats.state_to_first)} "
+        f"step_delta_abs_max={_format_vector(stats.step_delta_abs_max)} "
+        f"step_acc_abs_max={_format_vector(stats.step_acc_abs_max)}"
+    )
+
+
+def format_action_array_preview(
+    actions: np.ndarray | torch.Tensor,
+    *,
+    label: str,
+    max_rows: int = 3,
+    precision: int = 3,
+) -> str:
+    """Format a compact preview of an action chunk for terminal inspection."""
+
+    action_arr = np.asarray(actions, dtype=np.float32)
+    if action_arr.ndim == 1:
+        action_arr = action_arr[None, :]
+
+    max_rows = max(int(max_rows), 1)
+    precision = max(int(precision), 0)
+
+    def _format_rows(rows: np.ndarray) -> str:
+        rendered_rows = []
+        for row in np.asarray(rows, dtype=np.float32):
+            values = ", ".join(f"{value:.{precision}f}" for value in row)
+            rendered_rows.append(f"[{values}]")
+        return "[" + ", ".join(rendered_rows) + "]"
+
+    if len(action_arr) <= max_rows * 2:
+        return f"  {label}: shape={action_arr.shape} rows={_format_rows(action_arr)}"
+
+    head = _format_rows(action_arr[:max_rows])
+    tail = _format_rows(action_arr[-max_rows:])
+    return f"  {label}: shape={action_arr.shape} head={head} tail={tail}"
+
+
+def compute_boundary_jump_stats(
+    *,
+    previous_action: np.ndarray | torch.Tensor | None,
+    next_action: np.ndarray | torch.Tensor | None,
+    joint_dims: int = 6,
+) -> BoundaryJumpStats:
+    """Measure the jump from the old queue head to the next queued action."""
+
+    if previous_action is None or next_action is None:
+        return BoundaryJumpStats(joint_dims=max(int(joint_dims), 0), delta=None, l2=None, abs_max=None)
+
+    prev_arr = np.asarray(previous_action, dtype=np.float32).reshape(-1)
+    next_arr = np.asarray(next_action, dtype=np.float32).reshape(-1)
+    joint_dims = max(0, min(int(joint_dims), prev_arr.shape[-1], next_arr.shape[-1]))
+
+    if joint_dims == 0:
+        return BoundaryJumpStats(joint_dims=0, delta=None, l2=None, abs_max=None)
+
+    delta = (next_arr[:joint_dims] - prev_arr[:joint_dims]).astype(np.float32)
+    return BoundaryJumpStats(
+        joint_dims=joint_dims,
+        delta=delta,
+        l2=float(np.linalg.norm(delta)),
+        abs_max=float(np.max(np.abs(delta))),
+    )
+
+
+def format_boundary_jump_stats(stats: BoundaryJumpStats, *, label: str) -> str:
+    """Format queue-boundary jump diagnostics for terminal output."""
+
+    l2 = "n/a" if stats.l2 is None else f"{stats.l2:.6f}"
+    abs_max = "n/a" if stats.abs_max is None else f"{stats.abs_max:.6f}"
+    return (
+        f"  {label}: joint_dims={stats.joint_dims} "
+        f"delta={_format_vector(stats.delta)} "
+        f"l2={l2} "
+        f"abs_max={abs_max}"
+    )
+
+
+def blend_action_chunks(
+    *,
+    old_actions: np.ndarray | torch.Tensor,
+    new_actions: np.ndarray | torch.Tensor,
+    curve: str,
+    ema_alpha: float = 0.7,
+    max_transition_steps: int = 0,
+) -> np.ndarray:
+    """Blend old and new action chunks over a bounded transition window.
+
+    `max_transition_steps <= 0` preserves the previous behavior of blending across
+    the full overlap. Positive values limit the blend to the first N overlap steps.
+    """
+
+    new_arr = np.asarray(new_actions, dtype=np.float32)
+    if new_arr.ndim == 1:
+        new_arr = new_arr[None, :]
+    if len(new_arr) == 0:
+        return new_arr.copy()
+
+    old_arr = np.asarray(old_actions, dtype=np.float32)
+    if old_arr.size == 0:
+        return new_arr.copy()
+    if old_arr.ndim == 1:
+        old_arr = old_arr[None, :]
+    if len(old_arr) == 0 or old_arr.shape[-1] == 0:
+        return new_arr.copy()
+
+    overlap = min(len(old_arr), len(new_arr))
+    transition_steps = overlap if max_transition_steps <= 0 else min(overlap, int(max_transition_steps))
+    result = new_arr.copy()
+
+    for i in range(transition_steps):
+        if curve == "linear":
+            h = (i + 1) / (transition_steps + 1)
+        elif curve == "cubic":
+            t = (i + 1) / (transition_steps + 1)
+            h = 3 * t**2 - 2 * t**3
+        elif curve == "quintic":
+            t = (i + 1) / (transition_steps + 1)
+            h = 10 * t**3 - 15 * t**4 + 6 * t**5
+        elif curve == "ema":
+            h = float(ema_alpha)
+        else:
+            raise ValueError(f"Unknown transition curve: {curve!r}")
+        result[i] = (1.0 - h) * old_arr[i] + h * new_arr[i]
+
+    return result
+
+
+def format_checkpoint_action_norm_stats(
+    norm_stats: dict[str, NormStats] | None,
+    *,
+    joint_dims: int = 6,
+) -> str | None:
+    """Format checkpoint action normalization stats for quick terminal inspection."""
+
+    if not norm_stats:
+        return None
+
+    stats = None
+    for key in ("actions", "action"):
+        if key in norm_stats:
+            stats = norm_stats[key]
+            break
+    if stats is None:
+        return None
+
+    joint_dims = max(0, min(int(joint_dims), np.asarray(stats.mean).shape[-1]))
+    mean = np.asarray(stats.mean, dtype=np.float32)[:joint_dims]
+    std = np.asarray(stats.std, dtype=np.float32)[:joint_dims]
+    q01 = None if stats.q01 is None else np.asarray(stats.q01, dtype=np.float32)[:joint_dims]
+    q99 = None if stats.q99 is None else np.asarray(stats.q99, dtype=np.float32)[:joint_dims]
+    return (
+        "Checkpoint action norm stats: "
+        f"mean={_format_vector(mean)} "
+        f"std={_format_vector(std)} "
+        f"q01={_format_vector(q01)} "
+        f"q99={_format_vector(q99)}"
+    )
 
 
 def apply_rtc_guidance(
