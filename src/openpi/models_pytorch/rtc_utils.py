@@ -5,8 +5,10 @@ policies by guiding the denoising process towards the previous chunk's predictio
 """
 
 import math
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from dataclasses import field
 
 import numpy as np
 import torch
@@ -19,6 +21,9 @@ class RTCConfig:
 
     # Whether RTC is enabled
     enabled: bool = False
+    # Guidance target: "raw_prefix" preserves the previous RTC behavior, while
+    # "executed_prefix_b1" guides denoising using the executed joint-space prefix.
+    guidance_mode: str = "raw_prefix"
     # Attention schedule for prefix weights: "zeros" | "ones" | "linear" | "exp"
     prefix_attention_schedule: str = "linear"
     # Max guidance weight (if None, defaults to num_steps)
@@ -29,6 +34,77 @@ class RTCConfig:
     sigma_d: float = 1.0
     # Match lerobot default behavior unless explicitly opting into direct error guidance.
     full_trajectory_alignment: bool = False
+    # B1 executed-prefix guidance settings.
+    prefix_steps: int = 5
+    anchor_weight: float = 1.0
+    prefix_weight: float = 1.0
+    smooth_weight: float = 0.25
+    # Kept for interface parity with the design doc; v1 uses it as a conservative
+    # damping factor on the final guidance magnitude rather than as a standalone loss.
+    stay_weight: float = 0.25
+    guidance_start_fraction: float = 0.5
+    arm_joint_dims: int = 6
+    preserve_gripper: bool = True
+    b1_guided_delta_abs_max: float = 5.0
+    last_b1_diagnostics: "B1GuidanceDiagnostics | None" = None
+
+
+@dataclass(frozen=True)
+class RTCExecutedPrefixTransformSpec:
+    """Torch-native spec for decoding model outputs into executed arm actions."""
+
+    action_mean: np.ndarray | None
+    action_std: np.ndarray | None
+    action_q01: np.ndarray | None = None
+    action_q99: np.ndarray | None = None
+    use_quantiles: bool = False
+    delta_action_mask: tuple[bool, ...] | None = None
+    output_joint_flip_mask: tuple[float, ...] | None = None
+    arm_joint_dims: int = 6
+
+
+@dataclass(frozen=True)
+class ExecutedPrefixReference:
+    """Short executed-space prefix used as the B1 guidance target."""
+
+    executed_prefix_prev: np.ndarray
+    executed_prefix_ref: np.ndarray
+    window_start: int
+
+
+@dataclass(frozen=True)
+class B1GuidanceDiagnostics:
+    """Executed-prefix guidance diagnostics emitted from the model-side RTC path."""
+
+    guided_window_start: int
+    prefix_steps: int
+    delay_estimate: int
+    boundary_l2_before: float | None
+    boundary_l2_after: float | None
+    boundary_abs_max_before: float | None
+    boundary_abs_max_after: float | None
+    prefix_acc_abs_max_before: float | None
+    prefix_acc_abs_max_after: float | None
+    total_loss: float | None = None
+    correction_norm_before_clip: float | None = None
+    correction_norm_after_clip: float | None = None
+    correction_clip_scale: float | None = None
+    guidance_weight: float | None = None
+    conservative_scale: float | None = None
+    guided_delta_l2_after_clip: float | None = None
+    guided_delta_abs_max_after_clip: float | None = None
+    guided_delta_clip_fraction: float | None = None
+
+
+@dataclass(frozen=True)
+class B1BoundaryWindowStatus:
+    """Whether the real executed boundary fell inside the B1 guided window."""
+
+    guided_window_start: int
+    guided_window_end: int
+    real_boundary: int
+    boundary_hit: bool
+    miss_steps: int
 
 
 @dataclass(frozen=True)
@@ -78,6 +154,348 @@ class BoundaryJumpStats:
     delta: np.ndarray | None
     l2: float | None
     abs_max: float | None
+
+
+@dataclass
+class ModelLatencyProfiler:
+    """Lightweight manual profiler for model latency breakdowns."""
+
+    enabled: bool = False
+    component_ms: dict[str, float] = field(default_factory=dict)
+    sample_ms: dict[str, list[float]] = field(default_factory=dict)
+
+    def add_duration(self, name: str, duration_ms: float) -> None:
+        if not self.enabled:
+            return
+        self.component_ms[name] = self.component_ms.get(name, 0.0) + float(duration_ms)
+
+    def add_sample(self, name: str, duration_ms: float) -> None:
+        if not self.enabled:
+            return
+        self.sample_ms.setdefault(name, []).append(float(duration_ms))
+
+
+@dataclass(frozen=True)
+class ModelLatencyTrace:
+    """Single run latency breakdown."""
+
+    mode: str
+    component_ms: dict[str, float]
+    sample_ms: dict[str, list[float]]
+    metadata: dict[str, int | float | str]
+
+
+@dataclass(frozen=True)
+class ModelLatencyAggregate:
+    """Aggregate latency summary across multiple runs."""
+
+    mode: str
+    runs: int
+    mean_ms: dict[str, float]
+    std_ms: dict[str, float]
+    counts: dict[str, int]
+
+
+@dataclass
+class ModelLatencyCollector:
+    """Collect steady-state latency traces with consistent RTC/no-RTC semantics."""
+
+    warmup_remaining: int = 0
+    target_runs: int = 0
+    single_trace: ModelLatencyTrace | None = None
+    traces: list[ModelLatencyTrace] = field(default_factory=list)
+    report_written: bool = False
+
+    def ingest(self, trace: ModelLatencyTrace) -> str:
+        """Ingest one trace.
+
+        Returns one of:
+        - "disabled": collector inactive
+        - "incomplete": RTC trace did not include guidance timings yet
+        - "warmup": complete trace skipped as warmup
+        - "recorded_first": first recorded complete trace
+        - "recorded": subsequent recorded complete trace
+        - "done": target sample count already reached
+        """
+
+        if self.target_runs <= 0:
+            return "disabled"
+        if not is_complete_model_latency_trace(trace):
+            return "incomplete"
+        if self.warmup_remaining > 0:
+            self.warmup_remaining -= 1
+            return "warmup"
+        if len(self.traces) >= self.target_runs:
+            return "done"
+        if self.single_trace is None:
+            self.single_trace = trace
+            self.traces.append(trace)
+            return "recorded_first"
+        self.traces.append(trace)
+        return "recorded"
+
+    def is_ready(self) -> bool:
+        return self.target_runs > 0 and len(self.traces) >= self.target_runs and not self.report_written
+
+
+def build_model_latency_trace(
+    *,
+    profiler: ModelLatencyProfiler,
+    mode: str,
+    metadata: dict[str, int | float | str] | None = None,
+) -> ModelLatencyTrace:
+    """Finalize one latency trace and derive denoising summary fields."""
+
+    component_ms = {key: float(value) for key, value in profiler.component_ms.items()}
+    sample_ms = {key: [float(item) for item in values] for key, values in profiler.sample_ms.items()}
+
+    denoise_trace = sample_ms.get("denoising_step_trace_ms", [])
+    if denoise_trace:
+        component_ms.setdefault("denoising_total_ms", float(sum(denoise_trace)))
+        component_ms.setdefault("denoising_step_mean_ms", float(sum(denoise_trace) / len(denoise_trace)))
+
+    return ModelLatencyTrace(
+        mode=str(mode),
+        component_ms=component_ms,
+        sample_ms=sample_ms,
+        metadata=dict(metadata or {}),
+    )
+
+
+def is_complete_model_latency_trace(trace: ModelLatencyTrace) -> bool:
+    """Whether a trace is complete enough to be used for steady-state comparison."""
+
+    if trace.mode != "rtc":
+        return True
+    return "rtc_guidance_total_ms" in trace.component_ms
+
+
+def aggregate_model_latency_traces(traces: Sequence[ModelLatencyTrace]) -> ModelLatencyAggregate:
+    """Aggregate multiple traces into mean/std summaries."""
+
+    if not traces:
+        raise ValueError("aggregate_model_latency_traces() requires at least one trace")
+
+    mode = traces[0].mode
+    keys = sorted({key for trace in traces for key in trace.component_ms})
+    mean_ms: dict[str, float] = {}
+    std_ms: dict[str, float] = {}
+    counts: dict[str, int] = {}
+    for key in keys:
+        values = np.asarray([trace.component_ms[key] for trace in traces if key in trace.component_ms], dtype=np.float64)
+        counts[key] = int(values.shape[0])
+        mean_ms[key] = float(np.mean(values))
+        std_ms[key] = float(np.std(values, ddof=0))
+
+    return ModelLatencyAggregate(
+        mode=mode,
+        runs=len(traces),
+        mean_ms=mean_ms,
+        std_ms=std_ms,
+        counts=counts,
+    )
+
+
+def format_model_latency_summary(summary: ModelLatencyTrace | ModelLatencyAggregate) -> str:
+    """Render a compact latency summary aligned with the paper-style breakdown."""
+
+    preferred_order = [
+        "image_encoders_ms",
+        "llm_prefill_ms",
+        "denoising_total_ms",
+        "denoising_step_mean_ms",
+        "rtc_guidance_total_ms",
+        "rtc_decode_ms",
+        "rtc_loss_ms",
+        "rtc_autograd_ms",
+        "rtc_diag_ms",
+        "total_model_ms",
+    ]
+
+    if isinstance(summary, ModelLatencyTrace):
+        values = summary.component_ms
+        header = f"Mode: {summary.mode}"
+        if "compiled_path" in summary.metadata:
+            header += f" compiled_path={int(summary.metadata['compiled_path'])}"
+    else:
+        values = summary.mean_ms
+        header = f"Mode: {summary.mode} runs={summary.runs}"
+
+    ordered_keys = [key for key in preferred_order if key in values]
+    ordered_keys.extend(sorted(key for key in values if key not in preferred_order))
+    lines = [header]
+    for key in ordered_keys:
+        if isinstance(summary, ModelLatencyAggregate):
+            count_suffix = f" n={summary.counts.get(key, 0)}"
+        else:
+            count_suffix = ""
+        lines.append(f"{key}={values[key]:.3f} ms{count_suffix}")
+    return "\n".join(lines)
+
+
+def _sync_for_timing(device: torch.device) -> None:
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+
+
+def _start_timer(device: torch.device) -> float:
+    _sync_for_timing(device)
+    return time.perf_counter()
+
+
+def _finish_timer_ms(start_time: float, device: torch.device) -> float:
+    _sync_for_timing(device)
+    return (time.perf_counter() - start_time) * 1000.0
+
+
+def should_dump_chunk_handoff(
+    step_idx: int,
+    *,
+    enabled: bool,
+    step_min: int | None,
+    step_max: int | None,
+    stride: int,
+) -> bool:
+    """Whether this handoff event should be dumped for offline visualization."""
+
+    if not enabled:
+        return False
+    step_idx = int(step_idx)
+    if step_min is not None and step_idx < int(step_min):
+        return False
+    if step_max is not None and step_idx > int(step_max):
+        return False
+    stride = max(int(stride), 1)
+    return step_idx % stride == 0
+
+
+def _normalize_chunk_dump_array(actions: np.ndarray | torch.Tensor | None) -> np.ndarray:
+    if actions is None:
+        return np.empty((0, 0), dtype=np.float32)
+    arr = np.asarray(actions, dtype=np.float32)
+    if arr.ndim == 1:
+        return arr[None, :]
+    if arr.ndim != 2:
+        raise ValueError(f"Chunk dump arrays must be 1D or 2D, got shape {arr.shape}")
+    return arr
+
+
+def build_chunk_handoff_dump_payload(
+    *,
+    step_idx: int,
+    mode: str,
+    real_delay: int,
+    guided_window_start: int,
+    prior_start_index: int,
+    new_start_index: int,
+    handoff_index: int,
+    raw_prior: np.ndarray | torch.Tensor | None,
+    raw_new: np.ndarray | torch.Tensor | None,
+    executed_prior: np.ndarray | torch.Tensor | None,
+    executed_new: np.ndarray | torch.Tensor | None,
+) -> dict[str, np.ndarray | int | str]:
+    """Build a compact, normalized payload for offline handoff visualization."""
+
+    return {
+        "step_idx": int(step_idx),
+        "mode": str(mode),
+        "real_delay": int(real_delay),
+        "guided_window_start": int(guided_window_start),
+        "prior_start_index": int(prior_start_index),
+        "new_start_index": int(new_start_index),
+        "handoff_index": int(handoff_index),
+        "raw_prior": _normalize_chunk_dump_array(raw_prior),
+        "raw_new": _normalize_chunk_dump_array(raw_new),
+        "executed_prior": _normalize_chunk_dump_array(executed_prior),
+        "executed_new": _normalize_chunk_dump_array(executed_new),
+    }
+
+
+def interpolate_execution_action(
+    current_action: np.ndarray,
+    next_action: np.ndarray | None,
+    *,
+    interpolation_fraction: float,
+    arm_joint_dims: int = 6,
+) -> np.ndarray:
+    """Interpolate arm joints for low-FPS execution while keeping gripper step-wise.
+
+    The low-rate validation path should preserve the model's discrete action points while
+    letting the robot execute them continuously. For v1, we only interpolate the arm joints
+    and keep the gripper on the current low-rate target.
+    """
+    current_arr = np.asarray(current_action, dtype=np.float32)
+    target_arr = current_arr if next_action is None else np.asarray(next_action, dtype=np.float32)
+    if current_arr.shape != target_arr.shape:
+        raise ValueError(
+            "current_action and next_action must have the same shape for execution interpolation"
+        )
+
+    alpha = float(np.clip(interpolation_fraction, 0.0, 1.0))
+    result = current_arr.copy()
+    if arm_joint_dims > 0:
+        result[:arm_joint_dims] = (1.0 - alpha) * current_arr[:arm_joint_dims] + alpha * target_arr[:arm_joint_dims]
+    return result
+
+
+@dataclass
+class ExecutionResampler:
+    """Send-rate resampler for low-FPS RTC validation.
+
+    This helper is intentionally narrow: it converts low-rate policy targets into a higher-rate
+    stream of sendable arm joint targets without changing queue / RTC step semantics.
+    """
+
+    policy_fps: float
+    send_fps: float
+    arm_joint_dims: int = 6
+    interp_method: str = "linear"
+    current_policy_action: np.ndarray | None = None
+    _interp_index: int = 0
+
+    def __post_init__(self) -> None:
+        if self.policy_fps <= 0 or self.send_fps <= 0:
+            raise ValueError("policy_fps and send_fps must be positive")
+        if self.send_fps < self.policy_fps:
+            raise ValueError("send_fps must be greater than or equal to policy_fps")
+        ratio = self.send_fps / self.policy_fps
+        rounded_ratio = round(ratio)
+        if not math.isclose(ratio, rounded_ratio, rel_tol=0.0, abs_tol=1e-6):
+            raise ValueError("send_fps must be an integer multiple of policy_fps")
+        if self.interp_method != "linear":
+            raise ValueError(f"Unsupported execution interpolation method: {self.interp_method!r}")
+        self._send_steps_per_policy_step = max(int(rounded_ratio), 1)
+
+    @property
+    def send_steps_per_policy_step(self) -> int:
+        return self._send_steps_per_policy_step
+
+    def needs_policy_action(self) -> bool:
+        return self.current_policy_action is None or self._interp_index >= self._send_steps_per_policy_step
+
+    def start_policy_step(self, action: np.ndarray) -> None:
+        self.current_policy_action = np.asarray(action, dtype=np.float32).copy()
+        self._interp_index = 0
+
+    def sample(self, *, next_policy_action: np.ndarray | None) -> np.ndarray:
+        if self.current_policy_action is None:
+            raise ValueError("ExecutionResampler.sample() requires an active policy action")
+        if self._interp_index >= self._send_steps_per_policy_step:
+            return self.hold_current()
+        fraction = self._interp_index / self._send_steps_per_policy_step
+        out = interpolate_execution_action(
+            self.current_policy_action,
+            next_policy_action,
+            interpolation_fraction=fraction,
+            arm_joint_dims=self.arm_joint_dims,
+        )
+        self._interp_index += 1
+        return out
+
+    def hold_current(self) -> np.ndarray:
+        if self.current_policy_action is None:
+            raise ValueError("ExecutionResampler.hold_current() requires an active policy action")
+        return self.current_policy_action.copy()
 
 
 def get_prefix_weights(
@@ -252,7 +670,7 @@ def compute_action_chunk_stats(
 ) -> ActionChunkStats:
     """Summarize first-step error, step deltas, and step accelerations for a chunk."""
 
-    action_arr = np.asarray(actions, dtype=np.float32)
+    action_arr = np.asarray(actions, dtype=np.float64)
     if action_arr.ndim == 1:
         action_arr = action_arr[None, :]
 
@@ -262,7 +680,7 @@ def compute_action_chunk_stats(
     state_to_first_l2 = None
     state_to_first_abs_max = None
     if state is not None and joint_dims > 0:
-        state_arr = np.asarray(state, dtype=np.float32).reshape(-1)
+        state_arr = np.asarray(state, dtype=np.float64).reshape(-1)
         if state_arr.shape[-1] >= joint_dims:
             state_delta = joint_actions[0] - state_arr[:joint_dims]
             state_to_first_l2 = float(np.linalg.norm(state_delta))
@@ -417,8 +835,8 @@ def compute_boundary_jump_stats(
     if previous_action is None or next_action is None:
         return BoundaryJumpStats(joint_dims=max(int(joint_dims), 0), delta=None, l2=None, abs_max=None)
 
-    prev_arr = np.asarray(previous_action, dtype=np.float32).reshape(-1)
-    next_arr = np.asarray(next_action, dtype=np.float32).reshape(-1)
+    prev_arr = np.asarray(previous_action, dtype=np.float64).reshape(-1)
+    next_arr = np.asarray(next_action, dtype=np.float64).reshape(-1)
     joint_dims = max(0, min(int(joint_dims), prev_arr.shape[-1], next_arr.shape[-1]))
 
     if joint_dims == 0:
@@ -528,6 +946,391 @@ def format_checkpoint_action_norm_stats(
     )
 
 
+def _as_float_tensor(
+    value: torch.Tensor | np.ndarray | Sequence[float] | None,
+    *,
+    device: torch.device,
+) -> torch.Tensor | None:
+    if value is None:
+        return None
+    tensor = torch.as_tensor(value, dtype=torch.float32, device=device)
+    return tensor
+
+
+def _ensure_batched_tensor(value: torch.Tensor | None, *, dims: int) -> torch.Tensor | None:
+    if value is None:
+        return None
+    while value.ndim < dims:
+        value = value.unsqueeze(0)
+    return value
+
+
+def _expand_batch(value: torch.Tensor, batch_size: int) -> torch.Tensor:
+    if value.shape[0] == batch_size:
+        return value
+    if value.shape[0] == 1:
+        return value.expand(batch_size, *value.shape[1:])
+    raise ValueError(f"Cannot broadcast batch dimension {value.shape[0]} to {batch_size}")
+
+
+def decode_actions_to_executed_prefix_torch(
+    raw_actions: torch.Tensor | np.ndarray,
+    *,
+    observation_state: torch.Tensor | np.ndarray,
+    transform_spec: RTCExecutedPrefixTransformSpec,
+) -> torch.Tensor:
+    """Decode model outputs into executed arm-joint space for B1 guidance."""
+
+    actions = torch.as_tensor(raw_actions, dtype=torch.float32)
+    if actions.ndim == 2:
+        actions = actions.unsqueeze(0)
+    if actions.ndim != 3:
+        raise ValueError(f"Expected raw_actions to have rank 2 or 3, got shape {tuple(actions.shape)}")
+
+    device = actions.device
+    state = _as_float_tensor(observation_state, device=device)
+    if state is None:
+        raise ValueError("observation_state is required for executed-prefix decoding")
+    if state.ndim == 1:
+        state = state.unsqueeze(0)
+    state = _expand_batch(state, actions.shape[0])
+
+    decoded = actions
+    action_dim = decoded.shape[-1]
+
+    if transform_spec.use_quantiles:
+        q01 = _as_float_tensor(transform_spec.action_q01, device=device)
+        q99 = _as_float_tensor(transform_spec.action_q99, device=device)
+        if q01 is None or q99 is None:
+            raise ValueError("Quantile decoding requires action_q01 and action_q99")
+        q01 = q01.reshape(-1)
+        q99 = q99.reshape(-1)
+        stat_dim = q01.shape[0]
+        if stat_dim < action_dim:
+            first = (decoded[..., :stat_dim] + 1.0) / 2.0 * (q99 - q01 + 1e-6) + q01
+            decoded = torch.cat([first, decoded[..., stat_dim:]], dim=-1)
+        else:
+            q01 = q01[:action_dim]
+            q99 = q99[:action_dim]
+            decoded = (decoded + 1.0) / 2.0 * (q99 - q01 + 1e-6) + q01
+    else:
+        mean = _as_float_tensor(transform_spec.action_mean, device=device)
+        std = _as_float_tensor(transform_spec.action_std, device=device)
+        if mean is None or std is None:
+            raise ValueError("Z-score decoding requires action_mean and action_std")
+        mean = mean.reshape(-1)
+        std = std.reshape(-1)
+        if mean.shape[0] > action_dim:
+            mean = mean[:action_dim]
+        elif mean.shape[0] < action_dim:
+            mean = torch.cat([mean, mean.new_zeros(action_dim - mean.shape[0])], dim=0)
+        if std.shape[0] > action_dim:
+            std = std[:action_dim]
+        elif std.shape[0] < action_dim:
+            std = torch.cat([std, std.new_ones(action_dim - std.shape[0])], dim=0)
+        decoded = decoded * (std + 1e-6) + mean
+
+    if transform_spec.delta_action_mask is not None:
+        mask = torch.as_tensor(transform_spec.delta_action_mask, dtype=torch.bool, device=device).reshape(-1)
+        dims = min(mask.shape[0], decoded.shape[-1], state.shape[-1])
+        if dims > 0:
+            delta_base = torch.where(mask[:dims], state[:, :dims], torch.zeros_like(state[:, :dims]))
+            decoded = decoded.clone()
+            decoded[:, :, :dims] = decoded[:, :, :dims] + delta_base.unsqueeze(1)
+
+    if transform_spec.output_joint_flip_mask is not None:
+        flip_mask = torch.as_tensor(transform_spec.output_joint_flip_mask, dtype=torch.float32, device=device).reshape(-1)
+        dims = min(flip_mask.shape[0], decoded.shape[-1])
+        decoded = decoded.clone()
+        decoded[:, :, :dims] = decoded[:, :, :dims] * flip_mask[:dims]
+
+    joint_dims = max(0, min(int(transform_spec.arm_joint_dims), decoded.shape[-1]))
+    return decoded[:, :, :joint_dims]
+
+
+def build_executed_prefix_reference(
+    *,
+    processed_leftover: np.ndarray | torch.Tensor | None,
+    current_state: np.ndarray | torch.Tensor,
+    inference_delay_estimate: int,
+    prefix_steps: int,
+    action_horizon: int,
+    arm_joint_dims: int = 6,
+) -> ExecutedPrefixReference | None:
+    """Build the short executed-space reference prefix used by B1 guidance."""
+
+    if processed_leftover is None:
+        return None
+
+    leftover = np.asarray(processed_leftover, dtype=np.float32)
+    if leftover.size == 0:
+        return None
+    if leftover.ndim == 1:
+        leftover = leftover[None, :]
+
+    current_state_arr = np.asarray(current_state, dtype=np.float32).reshape(-1)
+    arm_joint_dims = max(0, min(int(arm_joint_dims), leftover.shape[-1], current_state_arr.shape[-1]))
+    if arm_joint_dims == 0:
+        return None
+
+    prefix_steps = max(int(prefix_steps), 0)
+    if prefix_steps == 0:
+        return None
+
+    window_start = get_b1_guided_window_start(
+        inference_delay_estimate=int(inference_delay_estimate),
+        action_horizon=int(action_horizon),
+        prefix_steps=prefix_steps,
+    )
+
+    if 0 <= window_start - 1 < len(leftover):
+        prev = leftover[window_start - 1, :arm_joint_dims]
+    else:
+        prev = current_state_arr[:arm_joint_dims]
+
+    last_available = leftover[-1, :arm_joint_dims]
+    ref = np.empty((prefix_steps, arm_joint_dims), dtype=np.float32)
+    for i in range(prefix_steps):
+        idx = window_start + i
+        ref[i] = leftover[idx, :arm_joint_dims] if idx < len(leftover) else last_available
+
+    return ExecutedPrefixReference(
+        executed_prefix_prev=np.asarray(prev, dtype=np.float32),
+        executed_prefix_ref=ref,
+        window_start=window_start,
+    )
+
+
+def get_executed_prefix_loss_scale_torch(
+    transform_spec: RTCExecutedPrefixTransformSpec,
+    *,
+    device: torch.device,
+    arm_joint_dims: int,
+) -> torch.Tensor:
+    """Return per-joint scales for stable B1 losses in executed action space."""
+
+    arm_joint_dims = max(int(arm_joint_dims), 0)
+    if arm_joint_dims == 0:
+        return torch.ones(0, dtype=torch.float32, device=device)
+
+    if transform_spec.use_quantiles:
+        q01 = _as_float_tensor(transform_spec.action_q01, device=device)
+        q99 = _as_float_tensor(transform_spec.action_q99, device=device)
+        if q01 is not None and q99 is not None:
+            scale = (q99.reshape(-1) - q01.reshape(-1)).abs() / 2.0
+        else:
+            scale = None
+    else:
+        std = _as_float_tensor(transform_spec.action_std, device=device)
+        scale = None if std is None else std.reshape(-1).abs()
+
+    if scale is None:
+        return torch.ones(arm_joint_dims, dtype=torch.float32, device=device)
+
+    if scale.shape[0] < arm_joint_dims:
+        scale = torch.cat([scale, torch.ones(arm_joint_dims - scale.shape[0], dtype=torch.float32, device=device)], dim=0)
+    else:
+        scale = scale[:arm_joint_dims]
+
+    return torch.clamp(scale, min=1.0)
+
+
+def compute_b1_prefix_smoothness_loss(y_prev: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
+    """Penalty on second differences across the handoff boundary [y_prev ; z]."""
+
+    if y_prev.ndim == 1:
+        y_prev = y_prev.unsqueeze(0)
+    if z.ndim == 2:
+        z = z.unsqueeze(0)
+    if z.shape[1] < 2:
+        return z.new_zeros(())
+
+    sequence = torch.cat([y_prev.unsqueeze(1), z], dim=1)
+    second_diff = sequence[:, 2:] - 2.0 * sequence[:, 1:-1] + sequence[:, :-2]
+    if second_diff.numel() == 0:
+        return z.new_zeros(())
+    return second_diff.square().mean()
+
+
+def should_mark_rtc_delay_estimate_valid(leftover_len_at_send: int) -> bool:
+    """A delay estimate is only trustworthy if the request was sent with a leftover tail."""
+
+    return int(leftover_len_at_send) > 0
+
+
+def get_b1_inference_delay_estimate(
+    *,
+    base_delay_estimate: int,
+    b1_delay_estimate_valid: bool,
+    warmup_multiplier: float = 2.0,
+) -> int:
+    """Use a conservative warmup estimate until we observe one real B1 delay."""
+
+    base_delay_estimate = max(int(base_delay_estimate), 0)
+    if b1_delay_estimate_valid:
+        return base_delay_estimate
+    warmup_multiplier = max(float(warmup_multiplier), 1.0)
+    return max(base_delay_estimate, int(math.ceil(base_delay_estimate * warmup_multiplier)))
+
+
+def get_b1_guided_window_start(
+    *,
+    inference_delay_estimate: int,
+    action_horizon: int,
+    prefix_steps: int,
+    backoff_steps: int = 1,
+) -> int:
+    """Start the B1 guidance window slightly before the estimated real boundary."""
+
+    action_horizon = max(int(action_horizon), 0)
+    if action_horizon == 0:
+        return 0
+
+    prefix_steps = max(int(prefix_steps), 1)
+    backoff_steps = max(int(backoff_steps), 0)
+    max_start = max(action_horizon - prefix_steps, 0)
+    return min(max(int(inference_delay_estimate) - backoff_steps, 0), max_start)
+
+
+def compute_b1_boundary_window_status(
+    diagnostics: B1GuidanceDiagnostics,
+    *,
+    real_delay: int,
+) -> B1BoundaryWindowStatus:
+    """Report whether the actual executed boundary landed inside the B1 window."""
+
+    window_start = int(diagnostics.guided_window_start)
+    window_end = window_start + max(int(diagnostics.prefix_steps), 0)
+    real_boundary = max(int(real_delay), 0)
+    boundary_hit = window_start <= real_boundary < window_end
+
+    if boundary_hit:
+        miss_steps = 0
+    elif real_boundary < window_start:
+        miss_steps = window_start - real_boundary
+    else:
+        last_guided_step = max(window_end - 1, window_start)
+        miss_steps = real_boundary - last_guided_step
+
+    return B1BoundaryWindowStatus(
+        guided_window_start=window_start,
+        guided_window_end=window_end,
+        real_boundary=real_boundary,
+        boundary_hit=boundary_hit,
+        miss_steps=miss_steps,
+    )
+
+
+def format_b1_boundary_window_status(status: B1BoundaryWindowStatus) -> str:
+    """Format whether the true boundary fell inside the B1 guidance window."""
+
+    return (
+        "  RTC B1 boundary window: "
+        f"guided_window=[{status.guided_window_start}, {status.guided_window_end}) "
+        f"real_boundary={status.real_boundary} "
+        f"hit={'yes' if status.boundary_hit else 'no'} "
+        f"miss_steps={status.miss_steps}"
+    )
+
+
+def format_b1_guidance_diagnostics(
+    diagnostics: B1GuidanceDiagnostics,
+    *,
+    real_delay: int | None = None,
+) -> str:
+    """Format model-side B1 guidance diagnostics for terminal output."""
+
+    def fmt(value: float | None) -> str:
+        return "n/a" if value is None else f"{value:.6f}"
+
+    parts = [
+        "  RTC B1:",
+        f"guided_window_start={diagnostics.guided_window_start}",
+        f"prefix_steps={diagnostics.prefix_steps}",
+        f"delay_estimate={diagnostics.delay_estimate}",
+    ]
+    if real_delay is not None:
+        parts.append(f"real_delay={int(real_delay)}")
+    parts.extend(
+        [
+            f"boundary_l2_before={fmt(diagnostics.boundary_l2_before)}",
+            f"boundary_l2_after={fmt(diagnostics.boundary_l2_after)}",
+            f"boundary_abs_max_before={fmt(diagnostics.boundary_abs_max_before)}",
+            f"boundary_abs_max_after={fmt(diagnostics.boundary_abs_max_after)}",
+            f"prefix_acc_abs_max_before={fmt(diagnostics.prefix_acc_abs_max_before)}",
+            f"prefix_acc_abs_max_after={fmt(diagnostics.prefix_acc_abs_max_after)}",
+            f"total_loss={fmt(diagnostics.total_loss)}",
+            f"correction_norm_before_clip={fmt(diagnostics.correction_norm_before_clip)}",
+            f"correction_norm_after_clip={fmt(diagnostics.correction_norm_after_clip)}",
+            f"correction_clip_scale={fmt(diagnostics.correction_clip_scale)}",
+            f"guidance_weight={fmt(diagnostics.guidance_weight)}",
+            f"conservative_scale={fmt(diagnostics.conservative_scale)}",
+            f"guided_delta_l2_after_clip={fmt(diagnostics.guided_delta_l2_after_clip)}",
+            f"guided_delta_abs_max_after_clip={fmt(diagnostics.guided_delta_abs_max_after_clip)}",
+            f"guided_delta_clip_fraction={fmt(diagnostics.guided_delta_clip_fraction)}",
+        ]
+    )
+    return " ".join(parts)
+
+
+def _compute_b1_guidance_ramp(time: torch.Tensor, guidance_start_fraction: float) -> torch.Tensor:
+    start_fraction = min(max(float(guidance_start_fraction), 0.0), 0.999999)
+    progress = 1.0 - torch.clamp(time, min=0.0, max=1.0)
+    ramp = (progress - start_fraction) / max(1.0 - start_fraction, 1e-6)
+    return torch.clamp(ramp, min=0.0, max=1.0)
+
+
+def _build_b1_diagnostics(
+    *,
+    z_before: torch.Tensor,
+    z_after: torch.Tensor,
+    y_prev: torch.Tensor,
+    window_start: int,
+    delay_estimate: int,
+    total_loss: float | None = None,
+    correction_norm_before_clip: float | None = None,
+    correction_norm_after_clip: float | None = None,
+    correction_clip_scale: float | None = None,
+    guidance_weight: float | None = None,
+    conservative_scale: float | None = None,
+    guided_delta_l2_after_clip: float | None = None,
+    guided_delta_abs_max_after_clip: float | None = None,
+    guided_delta_clip_fraction: float | None = None,
+) -> B1GuidanceDiagnostics:
+    before = np.asarray(z_before[0].detach().cpu(), dtype=np.float32)
+    after = np.asarray(z_after[0].detach().cpu(), dtype=np.float32)
+    prev = np.asarray(y_prev[0].detach().cpu(), dtype=np.float32)
+
+    boundary_before = compute_boundary_jump_stats(previous_action=prev, next_action=before[0], joint_dims=before.shape[-1])
+    boundary_after = compute_boundary_jump_stats(previous_action=prev, next_action=after[0], joint_dims=after.shape[-1])
+
+    before_with_prev = np.concatenate([prev[None, :], before], axis=0)
+    after_with_prev = np.concatenate([prev[None, :], after], axis=0)
+    before_chunk = compute_action_chunk_stats(before_with_prev, joint_dims=before.shape[-1])
+    after_chunk = compute_action_chunk_stats(after_with_prev, joint_dims=after.shape[-1])
+
+    return B1GuidanceDiagnostics(
+        guided_window_start=int(window_start),
+        prefix_steps=int(before.shape[0]),
+        delay_estimate=int(delay_estimate),
+        boundary_l2_before=boundary_before.l2,
+        boundary_l2_after=boundary_after.l2,
+        boundary_abs_max_before=boundary_before.abs_max,
+        boundary_abs_max_after=boundary_after.abs_max,
+        prefix_acc_abs_max_before=before_chunk.step_acc_abs_max,
+        prefix_acc_abs_max_after=after_chunk.step_acc_abs_max,
+        total_loss=total_loss,
+        correction_norm_before_clip=correction_norm_before_clip,
+        correction_norm_after_clip=correction_norm_after_clip,
+        correction_clip_scale=correction_clip_scale,
+        guidance_weight=guidance_weight,
+        conservative_scale=conservative_scale,
+        guided_delta_l2_after_clip=guided_delta_l2_after_clip,
+        guided_delta_abs_max_after_clip=guided_delta_abs_max_after_clip,
+        guided_delta_clip_fraction=guided_delta_clip_fraction,
+    )
+
+
 def apply_rtc_guidance(
     *,
     x_t: torch.Tensor,
@@ -538,13 +1341,19 @@ def apply_rtc_guidance(
     rtc_config: RTCConfig,
     num_flow_matching_steps: int,
     execution_horizon: int | None = None,
+    executed_prefix_prev: torch.Tensor | np.ndarray | None = None,
+    executed_prefix_ref: torch.Tensor | np.ndarray | None = None,
+    observation_state: torch.Tensor | np.ndarray | None = None,
+    executed_prefix_transform_spec: RTCExecutedPrefixTransformSpec | None = None,
+    profiler: ModelLatencyProfiler | None = None,
 ) -> torch.Tensor:
     """Apply RTC guidance to one denoising step.
 
     This mirrors lerobot's RTCProcessor.denoise_step() behavior for the PyTorch
     OpenPI path so it can be tested independently from the model.
     """
-    if prev_chunk_left_over is None or not rtc_config.enabled:
+    rtc_config.last_b1_diagnostics = None
+    if not rtc_config.enabled:
         return original_denoise_step_partial(x_t)
 
     tau = 1 - time
@@ -554,6 +1363,208 @@ def apply_rtc_guidance(
     if x_t.ndim < 3:
         x_t = x_t.unsqueeze(0)
         squeezed = True
+
+    time_tensor = torch.as_tensor(time, dtype=torch.float32, device=x_t.device)
+
+    def _return_baseline() -> torch.Tensor:
+        baseline = original_denoise_step_partial(x_t)
+        if squeezed:
+            baseline = baseline.squeeze(0)
+        return baseline
+
+    if rtc_config.guidance_mode == "executed_prefix_b1":
+        if (
+            executed_prefix_prev is None
+            or executed_prefix_ref is None
+            or observation_state is None
+            or executed_prefix_transform_spec is None
+        ):
+            return _return_baseline()
+
+        prefix_prev = _ensure_batched_tensor(_as_float_tensor(executed_prefix_prev, device=x_t.device), dims=2)
+        prefix_ref = _ensure_batched_tensor(_as_float_tensor(executed_prefix_ref, device=x_t.device), dims=3)
+        state = _ensure_batched_tensor(_as_float_tensor(observation_state, device=x_t.device), dims=2)
+        if prefix_prev is None or prefix_ref is None or state is None:
+            return _return_baseline()
+
+        prefix_prev = _expand_batch(prefix_prev, x_t.shape[0])
+        prefix_ref = _expand_batch(prefix_ref, x_t.shape[0])
+        state = _expand_batch(state, x_t.shape[0])
+        if not (
+            torch.isfinite(prefix_prev).all()
+            and torch.isfinite(prefix_ref).all()
+            and torch.isfinite(state).all()
+        ):
+            return _return_baseline()
+
+        guidance_ramp = _compute_b1_guidance_ramp(time_tensor, rtc_config.guidance_start_fraction)
+        if torch.all(guidance_ramp <= 0):
+            return _return_baseline()
+
+        guidance_timer = _start_timer(x_t.device) if profiler is not None and profiler.enabled else None
+        with torch.enable_grad():
+            x_t.requires_grad_(True)
+            v_t = original_denoise_step_partial(x_t)
+            x1_t = x_t - time_tensor * v_t
+            decode_timer = _start_timer(x_t.device) if guidance_timer is not None else None
+            decoded = decode_actions_to_executed_prefix_torch(
+                x1_t,
+                observation_state=state,
+                transform_spec=executed_prefix_transform_spec,
+            )
+            if decode_timer is not None:
+                profiler.add_duration("rtc_decode_ms", _finish_timer_ms(decode_timer, x_t.device))
+            if not torch.isfinite(decoded).all():
+                return _return_baseline()
+
+            action_horizon = decoded.shape[1]
+            requested_prefix_steps = min(
+                max(int(rtc_config.prefix_steps), 0),
+                prefix_ref.shape[1],
+            )
+            window_start = get_b1_guided_window_start(
+                inference_delay_estimate=int(inference_delay),
+                action_horizon=action_horizon,
+                prefix_steps=requested_prefix_steps,
+            )
+            max_prefix = max(action_horizon - window_start, 0)
+            prefix_steps = min(requested_prefix_steps, max_prefix)
+            if prefix_steps <= 0:
+                result = v_t
+                if squeezed:
+                    result = result.squeeze(0)
+                return result
+
+            arm_joint_dims = min(int(rtc_config.arm_joint_dims), decoded.shape[-1], prefix_prev.shape[-1], prefix_ref.shape[-1])
+            if arm_joint_dims <= 0:
+                result = v_t
+                if squeezed:
+                    result = result.squeeze(0)
+                return result
+
+            z = decoded[:, window_start : window_start + prefix_steps, :arm_joint_dims]
+            y_prev = prefix_prev[:, :arm_joint_dims]
+            y_ref = prefix_ref[:, :prefix_steps, :arm_joint_dims]
+            if not (torch.isfinite(z).all() and torch.isfinite(y_prev).all() and torch.isfinite(y_ref).all()):
+                return _return_baseline()
+
+            loss_scale = get_executed_prefix_loss_scale_torch(
+                executed_prefix_transform_spec,
+                device=x_t.device,
+                arm_joint_dims=arm_joint_dims,
+            )
+            loss_timer = _start_timer(x_t.device) if guidance_timer is not None else None
+            z_scaled = z / loss_scale.view(1, 1, -1)
+            y_prev_scaled = y_prev / loss_scale.view(1, -1)
+            y_ref_scaled = y_ref / loss_scale.view(1, 1, -1)
+
+            total_loss = x_t.new_zeros(())
+            if rtc_config.anchor_weight > 0:
+                total_loss = total_loss + float(rtc_config.anchor_weight) * torch.mean((z_scaled[:, 0] - y_ref_scaled[:, 0]) ** 2)
+            if rtc_config.prefix_weight > 0 and prefix_steps > 1:
+                total_loss = total_loss + float(rtc_config.prefix_weight) * torch.mean((z_scaled[:, 1:] - y_ref_scaled[:, 1:]) ** 2)
+            if rtc_config.smooth_weight > 0 and prefix_steps > 1:
+                total_loss = total_loss + float(rtc_config.smooth_weight) * compute_b1_prefix_smoothness_loss(y_prev_scaled, z_scaled)
+            if loss_timer is not None:
+                profiler.add_duration("rtc_loss_ms", _finish_timer_ms(loss_timer, x_t.device))
+
+            if not torch.isfinite(total_loss):
+                return _return_baseline()
+            if float(total_loss.detach().item()) == 0.0:
+                result = v_t
+                if squeezed:
+                    result = result.squeeze(0)
+                return result
+
+            autograd_timer = _start_timer(x_t.device) if guidance_timer is not None else None
+            correction = torch.autograd.grad(total_loss, x_t, retain_graph=False)[0]
+            if autograd_timer is not None:
+                profiler.add_duration("rtc_autograd_ms", _finish_timer_ms(autograd_timer, x_t.device))
+            correction = torch.nan_to_num(correction, nan=0.0, posinf=0.0, neginf=0.0)
+            correction_norm = torch.linalg.vector_norm(correction.reshape(correction.shape[0], -1), dim=1, keepdim=True)
+            correction_norm_before_clip = correction_norm.detach().clone()
+            max_correction_norm = math.sqrt(float(max(prefix_steps * arm_joint_dims, 1)))
+            correction_scale = torch.clamp(max_correction_norm / correction_norm.clamp_min(1e-6), max=1.0)
+            correction = correction * correction_scale.view(-1, 1, 1)
+            correction_norm_after_clip = torch.linalg.vector_norm(correction.reshape(correction.shape[0], -1), dim=1, keepdim=True)
+
+        max_guidance_weight = rtc_config.max_guidance_weight
+        if max_guidance_weight is None:
+            max_guidance_weight = 1.0
+
+        max_guidance_weight = torch.as_tensor(max_guidance_weight, dtype=torch.float32, device=x_t.device)
+        tau_tensor = torch.as_tensor(tau, dtype=torch.float32, device=x_t.device)
+        squared_one_minus_tau = (1 - tau_tensor) ** 2
+        prior_variance = torch.as_tensor(rtc_config.sigma_d**2, dtype=torch.float32, device=x_t.device)
+        inv_r2 = (squared_one_minus_tau + tau_tensor**2 * prior_variance) / (squared_one_minus_tau * prior_variance)
+        c = torch.nan_to_num((1 - tau_tensor) / tau_tensor, posinf=max_guidance_weight)
+        guidance_weight = torch.nan_to_num(c * inv_r2, posinf=max_guidance_weight)
+        guidance_weight = torch.minimum(guidance_weight, max_guidance_weight)
+        conservative_scale = guidance_ramp / (1.0 + max(float(rtc_config.stay_weight), 0.0))
+
+        guided_delta = guidance_weight * conservative_scale * correction
+        guided_delta = torch.nan_to_num(guided_delta, nan=0.0, posinf=0.0, neginf=0.0)
+        guided_delta_before_clip = guided_delta.detach().clone()
+        guided_delta_abs_max = max(float(rtc_config.b1_guided_delta_abs_max), 0.0)
+        guided_delta = torch.clamp(guided_delta, min=-guided_delta_abs_max, max=guided_delta_abs_max)
+        result = v_t + guided_delta
+        if not torch.isfinite(result).all():
+            return _return_baseline()
+
+        with torch.no_grad():
+            x1_guided = x_t.detach() - time_tensor * result.detach()
+            if not torch.isfinite(x1_guided).all():
+                if squeezed:
+                    result = result.squeeze(0)
+                return result
+            diag_timer = _start_timer(x_t.device) if guidance_timer is not None else None
+            decoded_before = decode_actions_to_executed_prefix_torch(
+                x1_t.detach(),
+                observation_state=state,
+                transform_spec=executed_prefix_transform_spec,
+            )[:, window_start : window_start + prefix_steps, :arm_joint_dims]
+            decoded_after = decode_actions_to_executed_prefix_torch(
+                x1_guided,
+                observation_state=state,
+                transform_spec=executed_prefix_transform_spec,
+            )[:, window_start : window_start + prefix_steps, :arm_joint_dims]
+            if torch.isfinite(decoded_before).all() and torch.isfinite(decoded_after).all():
+                guided_delta_abs_before = torch.abs(guided_delta_before_clip)
+                if guided_delta_abs_max <= 0:
+                    guided_delta_clip_fraction = 0.0
+                else:
+                    guided_delta_clip_fraction = float(
+                        torch.mean((guided_delta_abs_before >= guided_delta_abs_max).to(torch.float32)).item()
+                    )
+                rtc_config.last_b1_diagnostics = _build_b1_diagnostics(
+                    z_before=decoded_before,
+                    z_after=decoded_after,
+                    y_prev=y_prev.detach(),
+                    window_start=window_start,
+                    delay_estimate=int(inference_delay),
+                    total_loss=float(total_loss.detach().item()),
+                    correction_norm_before_clip=float(correction_norm_before_clip[0, 0].item()),
+                    correction_norm_after_clip=float(correction_norm_after_clip[0, 0].item()),
+                    correction_clip_scale=float(correction_scale[0, 0].item()),
+                    guidance_weight=float(guidance_weight.detach().item()),
+                    conservative_scale=float(guidance_ramp.detach().reshape(-1)[0].item() / (1.0 + max(float(rtc_config.stay_weight), 0.0))),
+                    guided_delta_l2_after_clip=float(
+                        torch.linalg.vector_norm(guided_delta[0].reshape(-1), dim=0).item()
+                    ),
+                    guided_delta_abs_max_after_clip=float(torch.max(torch.abs(guided_delta[0])).item()),
+                    guided_delta_clip_fraction=guided_delta_clip_fraction,
+                )
+            if diag_timer is not None:
+                profiler.add_duration("rtc_diag_ms", _finish_timer_ms(diag_timer, x_t.device))
+        if guidance_timer is not None:
+            profiler.add_duration("rtc_guidance_total_ms", _finish_timer_ms(guidance_timer, x_t.device))
+
+        if squeezed:
+            result = result.squeeze(0)
+        return result
+
+    if prev_chunk_left_over is None:
+        return _return_baseline()
 
     if isinstance(prev_chunk_left_over, np.ndarray):
         prev_chunk_left_over = torch.from_numpy(prev_chunk_left_over)
@@ -583,7 +1594,6 @@ def apply_rtc_guidance(
         .unsqueeze(-1)
     )
 
-    time_tensor = torch.as_tensor(time, dtype=torch.float32, device=x_t.device)
     with torch.enable_grad():
         x_t.requires_grad_(True)
         v_t = original_denoise_step_partial(x_t)

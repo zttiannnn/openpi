@@ -3,6 +3,7 @@ import logging
 import pathlib
 import time
 from typing import Any, TypeAlias
+from dataclasses import replace
 
 import flax
 import flax.traverse_util
@@ -101,6 +102,7 @@ class Policy(BasePolicy):
             sample_fn = self._sample_actions
 
         raw_model_actions = sample_fn(sample_rng_or_pytorch_device, observation, **sample_kwargs)
+        model_latency_trace = getattr(self._model, "last_model_latency_trace", None)
 
         outputs = {
             "state": inputs["state"],
@@ -120,6 +122,10 @@ class Policy(BasePolicy):
         outputs["policy_timing"] = {
             "infer_ms": model_time * 1000,
         }
+        if model_latency_trace is not None:
+            component_ms = dict(model_latency_trace.component_ms)
+            component_ms["total_model_ms"] = model_time * 1000
+            outputs["model_latency_trace"] = replace(model_latency_trace, component_ms=component_ms)
         return outputs
 
     @property

@@ -6,11 +6,49 @@ from typing import Any
 import jax.numpy as jnp
 
 import openpi.models.model as _model
+from openpi.models_pytorch.rtc_utils import RTCExecutedPrefixTransformSpec
 import openpi.policies.policy as _policy
 import openpi.shared.download as download
 from openpi.training import checkpoints as _checkpoints
 from openpi.training import config as _config
 import openpi.transforms as transforms
+
+
+def _build_rtc_executed_prefix_transform_spec(
+    *,
+    norm_stats: dict[str, transforms.NormStats] | None,
+    use_quantiles: bool,
+    output_transforms: list[transforms.DataTransformFn],
+) -> RTCExecutedPrefixTransformSpec | None:
+    action_stats = None
+    if norm_stats is not None:
+        for key in ("actions", "action"):
+            if key in norm_stats:
+                action_stats = norm_stats[key]
+                break
+    if action_stats is None:
+        return None
+
+    delta_action_mask = None
+    output_joint_flip_mask = None
+    for transform in output_transforms:
+        if isinstance(transform, transforms.AbsoluteActions) and transform.mask is not None:
+            delta_action_mask = tuple(bool(v) for v in transform.mask)
+        if transform.__class__.__name__ == "AgileXOutputs" and getattr(transform, "adapt_to_pi", False):
+            from openpi.policies import agileX_policy
+
+            output_joint_flip_mask = tuple(float(v) for v in agileX_policy._joint_flip_mask().tolist())
+
+    return RTCExecutedPrefixTransformSpec(
+        action_mean=action_stats.mean,
+        action_std=action_stats.std,
+        action_q01=action_stats.q01,
+        action_q99=action_stats.q99,
+        use_quantiles=use_quantiles,
+        delta_action_mask=delta_action_mask,
+        output_joint_flip_mask=output_joint_flip_mask,
+        arm_joint_dims=6,
+    )
 
 
 def create_trained_policy(
@@ -77,6 +115,22 @@ def create_trained_policy(
         except ImportError:
             pytorch_device = "cpu"
 
+    output_transforms = [
+        *data_config.model_transforms.outputs,
+        transforms.Unnormalize(norm_stats, use_quantiles=data_config.use_quantile_norm),
+        *data_config.data_transforms.outputs,
+        *repack_transforms.outputs,
+    ]
+
+    if is_pytorch:
+        rtc_transform_spec = _build_rtc_executed_prefix_transform_spec(
+            norm_stats=norm_stats,
+            use_quantiles=data_config.use_quantile_norm,
+            output_transforms=output_transforms,
+        )
+        if rtc_transform_spec is not None:
+            setattr(model, "rtc_executed_prefix_transform_spec", rtc_transform_spec)
+
     return _policy.Policy(
         model,
         transforms=[
@@ -86,12 +140,7 @@ def create_trained_policy(
             transforms.Normalize(norm_stats, use_quantiles=data_config.use_quantile_norm),
             *data_config.model_transforms.inputs,
         ],
-        output_transforms=[
-            *data_config.model_transforms.outputs,
-            transforms.Unnormalize(norm_stats, use_quantiles=data_config.use_quantile_norm),
-            *data_config.data_transforms.outputs,
-            *repack_transforms.outputs,
-        ],
+        output_transforms=output_transforms,
         sample_kwargs=sample_kwargs,
         metadata=train_config.policy_metadata,
         is_pytorch=is_pytorch,

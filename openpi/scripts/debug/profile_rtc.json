@@ -1,0 +1,75 @@
+{
+  "single_trace": {
+    "mode": "rtc",
+    "component_ms": {
+      "image_encoders_ms": 34.12670874968171,
+      "llm_prefill_ms": 95.13799101114273,
+      "rtc_decode_ms": 3.2508880831301212,
+      "rtc_loss_ms": 2.223056275397539,
+      "rtc_autograd_ms": 187.3410763218999,
+      "rtc_diag_ms": 11.313656810671091,
+      "rtc_guidance_total_ms": 374.4373279623687,
+      "total_model_ms": 642.4622116610408,
+      "denoising_total_ms": 507.33109237626195,
+      "denoising_step_mean_ms": 50.733109237626195
+    },
+    "sample_ms": {
+      "denoising_step_trace_ms": [
+        25.548713747411966,
+        26.364134158939123,
+        24.021737277507782,
+        22.065280936658382,
+        21.605229005217552,
+        67.60627217590809,
+        76.32003305479884,
+        78.63600505515933,
+        81.72274800017476,
+        83.44093896448612
+      ]
+    },
+    "metadata": {
+      "num_steps": 10,
+      "compiled_path": 0
+    }
+  },
+  "aggregate": {
+    "mode": "rtc",
+    "runs": 5,
+    "mean_ms": {
+      "denoising_step_mean_ms": 53.1581355817616,
+      "denoising_total_ms": 531.581355817616,
+      "image_encoders_ms": 32.13729280978441,
+      "llm_prefill_ms": 96.56250849366188,
+      "rtc_autograd_ms": 196.52464147657156,
+      "rtc_decode_ms": 3.2476885244250298,
+      "rtc_diag_ms": 12.038126680999994,
+      "rtc_guidance_total_ms": 385.23766240105033,
+      "rtc_loss_ms": 2.1717624738812447,
+      "total_model_ms": 666.2209527567029
+    },
+    "std_ms": {
+      "denoising_step_mean_ms": 2.0356317695211157,
+      "denoising_total_ms": 20.356317695211157,
+      "image_encoders_ms": 1.4053180134196133,
+      "llm_prefill_ms": 2.7013677776327936,
+      "rtc_autograd_ms": 6.668732092387289,
+      "rtc_decode_ms": 0.20276423014889725,
+      "rtc_diag_ms": 0.948390806211849,
+      "rtc_guidance_total_ms": 9.696580448476595,
+      "rtc_loss_ms": 0.07124259630691918,
+      "total_model_ms": 18.28626757983001
+    },
+    "counts": {
+      "denoising_step_mean_ms": 5,
+      "denoising_total_ms": 5,
+      "image_encoders_ms": 5,
+      "llm_prefill_ms": 5,
+      "rtc_autograd_ms": 5,
+      "rtc_decode_ms": 5,
+      "rtc_diag_ms": 5,
+      "rtc_guidance_total_ms": 5,
+      "rtc_loss_ms": 5,
+      "total_model_ms": 5
+    }
+  }
+}

@@ -1,5 +1,6 @@
 import logging
 import math
+import time
 
 import torch
 from torch import Tensor
@@ -12,6 +13,8 @@ import openpi.models.gemma as _gemma
 from openpi.models_pytorch.gemma_pytorch import PaliGemmaWithExpertModel
 import openpi.models_pytorch.preprocessing_pytorch as _preprocessing
 from openpi.models_pytorch.rtc_utils import apply_rtc_guidance
+from openpi.models_pytorch.rtc_utils import build_model_latency_trace
+from openpi.models_pytorch.rtc_utils import ModelLatencyProfiler
 
 
 def get_safe_dtype(target_dtype, device_type):
@@ -112,10 +115,12 @@ class PI0Pytorch(nn.Module):
             self.action_time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
 
         torch.set_float32_matmul_precision("high")
-        self.sample_actions = torch.compile(self.sample_actions, mode="max-autotune")
+        self._sample_actions_compiled = torch.compile(self._sample_actions_impl, mode="max-autotune")
 
         # Initialize gradient checkpointing flag
         self.gradient_checkpointing_enabled = False
+        self.rtc_executed_prefix_transform_spec = None
+        self.last_model_latency_trace = None
 
         msg = "transformers_replace is not installed correctly. Please install it with `uv pip install transformers==4.53.2` and `cp -r ./src/openpi/models_pytorch/transformers_replace/* .venv/lib/python3.11/site-packages/transformers/`."
         try:
@@ -186,8 +191,27 @@ class PI0Pytorch(nn.Module):
         time = time_beta * 0.999 + 0.001
         return time.to(dtype=torch.float32, device=device)
 
+    @staticmethod
+    def _sync_for_timing(device) -> None:
+        if isinstance(device, torch.device):
+            device_obj = device
+        else:
+            device_obj = torch.device(device)
+        if device_obj.type == "cuda":
+            torch.cuda.synchronize(device_obj)
+
+    @classmethod
+    def _start_timer(cls, device):
+        cls._sync_for_timing(device)
+        return time.perf_counter()
+
+    @classmethod
+    def _finish_timer_ms(cls, start_time: float, device) -> float:
+        cls._sync_for_timing(device)
+        return (time.perf_counter() - start_time) * 1000.0
+
     def embed_prefix(
-        self, images, img_masks, lang_tokens, lang_masks
+        self, images, img_masks, lang_tokens, lang_masks, profiler: ModelLatencyProfiler | None = None
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Embed images with SigLIP and language tokens with embedding layer to prepare
         for PaliGemma transformer processing.
@@ -197,6 +221,9 @@ class PI0Pytorch(nn.Module):
         att_masks = []
 
         # Process images
+        image_timer = None
+        if profiler is not None and profiler.enabled and images:
+            image_timer = self._start_timer(images[0].device)
         for img, img_mask in zip(images, img_masks, strict=True):
 
             def image_embed_func(img):
@@ -211,6 +238,8 @@ class PI0Pytorch(nn.Module):
 
             # Create attention masks so that image tokens attend to each other
             att_masks += [0] * num_img_embs
+        if image_timer is not None:
+            profiler.add_duration("image_encoders_ms", self._finish_timer_ms(image_timer, images[0].device))
 
         # Process language tokens
         def lang_embed_func(lang_tokens):
@@ -376,12 +405,13 @@ class PI0Pytorch(nn.Module):
         return F.mse_loss(u_t, v_t, reduction="none")
 
     @torch.no_grad()
-    def sample_actions(self, device, observation, noise=None, num_steps=10) -> Tensor:
+    def _sample_actions_impl(self, device, observation, noise=None, num_steps=10, profiler: ModelLatencyProfiler | None = None) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)
 
-        This method is compiled via torch.compile for performance.
-        For RTC guidance, use sample_actions_rtc() instead.
+        This is the uncompiled implementation shared by the compiled fast path and the
+        opt-in profiling path.
         """
+        total_timer = self._start_timer(device) if profiler is not None and profiler.enabled else None
         bsize = observation.state.shape[0]
         if noise is None:
             actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
@@ -389,7 +419,13 @@ class PI0Pytorch(nn.Module):
 
         images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=False)
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images,
+            img_masks,
+            lang_tokens,
+            lang_masks,
+            profiler=profiler,
+        )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
@@ -397,6 +433,7 @@ class PI0Pytorch(nn.Module):
         prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
         self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
 
+        prefill_timer = self._start_timer(device) if profiler is not None and profiler.enabled else None
         _, past_key_values = self.paligemma_with_expert.forward(
             attention_mask=prefix_att_2d_masks_4d,
             position_ids=prefix_position_ids,
@@ -404,6 +441,8 @@ class PI0Pytorch(nn.Module):
             inputs_embeds=[prefix_embs, None],
             use_cache=True,
         )
+        if prefill_timer is not None:
+            profiler.add_duration("llm_prefill_ms", self._finish_timer_ms(prefill_timer, device))
 
         dt = -1.0 / num_steps
         dt = torch.tensor(dt, dtype=torch.float32, device=device)
@@ -412,6 +451,7 @@ class PI0Pytorch(nn.Module):
         time = torch.tensor(1.0, dtype=torch.float32, device=device)
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
+            denoise_timer = self._start_timer(device) if profiler is not None and profiler.enabled else None
             v_t = self.denoise_step(
                 state,
                 prefix_pad_masks,
@@ -419,16 +459,41 @@ class PI0Pytorch(nn.Module):
                 x_t,
                 expanded_time,
             )
+            if denoise_timer is not None:
+                profiler.add_sample("denoising_step_trace_ms", self._finish_timer_ms(denoise_timer, device))
 
             # Euler step - use new tensor assignment instead of in-place operation
             x_t = x_t + dt * v_t
             time += dt
+        if total_timer is not None:
+            profiler.add_duration("total_model_ms", self._finish_timer_ms(total_timer, device))
         return x_t
+
+    @torch.no_grad()
+    def sample_actions(self, device, observation, noise=None, num_steps=10, profile_model: bool = False) -> Tensor:
+        """Do a full inference forward and compute the action.
+
+        The normal path uses torch.compile. When profiling is enabled, we run the eager
+        implementation so semantic timing boundaries can be measured.
+        """
+        self.last_model_latency_trace = None
+        if profile_model:
+            profiler = ModelLatencyProfiler(enabled=True)
+            actions = self._sample_actions_impl(device, observation, noise=noise, num_steps=num_steps, profiler=profiler)
+            self.last_model_latency_trace = build_model_latency_trace(
+                profiler=profiler,
+                mode="no_rtc",
+                metadata={"num_steps": int(num_steps), "compiled_path": 0},
+            )
+            return actions
+        return self._sample_actions_compiled(device, observation, noise=noise, num_steps=num_steps)
 
     @torch.no_grad()
     def sample_actions_rtc(
         self, device, observation, noise=None, num_steps=10,
         rtc_config=None, prev_actions=None, inference_delay=0,
+        executed_prefix_prev=None, executed_prefix_ref=None,
+        profile_model: bool = False,
     ) -> Tensor:
         """Inference with RTC (Real-Time Chunking) guidance.
 
@@ -439,6 +504,9 @@ class PI0Pytorch(nn.Module):
         If rtc_config is None or prev_actions is None, falls back to
         standard denoising (equivalent to sample_actions but without compile).
         """
+        self.last_model_latency_trace = None
+        profiler = ModelLatencyProfiler(enabled=bool(profile_model))
+        total_timer = self._start_timer(device) if profiler.enabled else None
         bsize = observation.state.shape[0]
         if noise is None:
             actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
@@ -446,7 +514,13 @@ class PI0Pytorch(nn.Module):
 
         images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=False)
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images,
+            img_masks,
+            lang_tokens,
+            lang_masks,
+            profiler=profiler if profiler.enabled else None,
+        )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
@@ -454,6 +528,7 @@ class PI0Pytorch(nn.Module):
         prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
         self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
 
+        prefill_timer = self._start_timer(device) if profiler.enabled else None
         _, past_key_values = self.paligemma_with_expert.forward(
             attention_mask=prefix_att_2d_masks_4d,
             position_ids=prefix_position_ids,
@@ -461,6 +536,8 @@ class PI0Pytorch(nn.Module):
             inputs_embeds=[prefix_embs, None],
             use_cache=True,
         )
+        if prefill_timer is not None:
+            profiler.add_duration("llm_prefill_ms", self._finish_timer_ms(prefill_timer, device))
 
         dt = -1.0 / num_steps
         dt = torch.tensor(dt, dtype=torch.float32, device=device)
@@ -480,6 +557,7 @@ class PI0Pytorch(nn.Module):
                 )
 
             if rtc_config is not None and rtc_config.enabled:
+                denoise_timer = self._start_timer(device) if profiler.enabled else None
                 v_t = apply_rtc_guidance(
                     x_t=x_t,
                     prev_chunk_left_over=prev_actions,
@@ -488,13 +566,30 @@ class PI0Pytorch(nn.Module):
                     original_denoise_step_partial=denoise_step_partial_call,
                     rtc_config=rtc_config,
                     num_flow_matching_steps=num_steps,
+                    executed_prefix_prev=executed_prefix_prev,
+                    executed_prefix_ref=executed_prefix_ref,
+                    observation_state=state,
+                    executed_prefix_transform_spec=self.rtc_executed_prefix_transform_spec,
+                    profiler=profiler if profiler.enabled else None,
                 )
+                if denoise_timer is not None:
+                    profiler.add_sample("denoising_step_trace_ms", self._finish_timer_ms(denoise_timer, device))
             else:
+                denoise_timer = self._start_timer(device) if profiler.enabled else None
                 v_t = denoise_step_partial_call(x_t)
+                if denoise_timer is not None:
+                    profiler.add_sample("denoising_step_trace_ms", self._finish_timer_ms(denoise_timer, device))
 
             # Euler step - use new tensor assignment instead of in-place operation
             x_t = x_t + dt * v_t
             time += dt
+        if total_timer is not None:
+            profiler.add_duration("total_model_ms", self._finish_timer_ms(total_timer, device))
+            self.last_model_latency_trace = build_model_latency_trace(
+                profiler=profiler,
+                mode="rtc",
+                metadata={"num_steps": int(num_steps), "compiled_path": 0},
+            )
         return x_t
 
     def denoise_step(

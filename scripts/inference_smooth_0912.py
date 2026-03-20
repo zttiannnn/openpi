@@ -3,32 +3,48 @@ import matplotlib.pyplot as plt
 import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
 import time
 import argparse
+import csv
 import draccus
 import logging
 import multiprocessing as mp
 import collections
+import json
 import yaml
 import random
 import os
 import pathlib
+from dataclasses import asdict
 from scripts.numpy_logger import NumpyCSVLogger
 
 from openpi.policies import policy_config as _policy_config
 from openpi.models.tokenizer import PaligemmaTokenizer
 from openpi.models_pytorch.rtc_utils import RTCActionQueue
 from openpi.models_pytorch.rtc_utils import RTCConfig
+from openpi.models_pytorch.rtc_utils import ExecutionResampler
+from openpi.models_pytorch.rtc_utils import build_executed_prefix_reference
 from openpi.models_pytorch.rtc_utils import compute_action_chunk_stats
 from openpi.models_pytorch.rtc_utils import compute_action_chunk_joint_stats
 from openpi.models_pytorch.rtc_utils import compute_rtc_runtime_stats
 from openpi.models_pytorch.rtc_utils import compute_boundary_jump_stats
+from openpi.models_pytorch.rtc_utils import aggregate_model_latency_traces
 from openpi.models_pytorch.rtc_utils import blend_action_chunks
+from openpi.models_pytorch.rtc_utils import build_chunk_handoff_dump_payload
+from openpi.models_pytorch.rtc_utils import compute_b1_boundary_window_status
+from openpi.models_pytorch.rtc_utils import format_b1_guidance_diagnostics
+from openpi.models_pytorch.rtc_utils import format_b1_boundary_window_status
 from openpi.models_pytorch.rtc_utils import format_action_chunk_joint_stats
 from openpi.models_pytorch.rtc_utils import format_action_chunk_stats
 from openpi.models_pytorch.rtc_utils import format_action_array_preview
 from openpi.models_pytorch.rtc_utils import format_boundary_jump_stats
 from openpi.models_pytorch.rtc_utils import format_checkpoint_action_norm_stats
+from openpi.models_pytorch.rtc_utils import format_model_latency_summary
 from openpi.models_pytorch.rtc_utils import format_rtc_runtime_stats
+from openpi.models_pytorch.rtc_utils import get_b1_inference_delay_estimate
 from openpi.models_pytorch.rtc_utils import get_rtc_boundary_risks
+from openpi.models_pytorch.rtc_utils import ModelLatencyCollector
+from openpi.models_pytorch.rtc_utils import should_dump_chunk_handoff
+from openpi.shared.inference_kwargs import build_policy_infer_kwargs
+from openpi.models_pytorch.rtc_utils import should_mark_rtc_delay_estimate_valid
 from openpi.shared import normalize as _normalize
 from openpi.training import config as _config
 from third_party.agilex.agilexfollower import AlohaAgileXFollower
@@ -77,6 +93,20 @@ def print_action_diagnostics(
     if action_arr.ndim == 1:
         action_arr = action_arr[None, :]
 
+    if not np.isfinite(action_arr).all():
+        print(f"  {range_label} range: [non-finite], shape={action_arr.shape}")
+        print(f"  {chunk_label}: contains_nonfinite=True", flush=True)
+        if print_arrays:
+            print(
+                format_action_array_preview(
+                    action_arr,
+                    label=preview_label,
+                    max_rows=print_array_rows,
+                ),
+                flush=True,
+            )
+        return
+
     print(f"  {range_label} range: [{action_arr.min():.4f}, {action_arr.max():.4f}], shape={action_arr.shape}")
     chunk_stats = compute_action_chunk_stats(action_arr, state=state, joint_dims=joint_dims)
     print(format_action_chunk_stats(chunk_stats, label=chunk_label), flush=True)
@@ -91,6 +121,85 @@ def print_action_diagnostics(
             ),
             flush=True,
         )
+
+
+def _peek_next_policy_action(action_queue, *, rtc_enabled: bool):
+    if rtc_enabled:
+        leftover = action_queue.get_processed_left_over()
+        if leftover is None or len(leftover) == 0:
+            return None
+        return np.asarray(leftover[0], dtype=float).copy()
+    if len(action_queue) == 0:
+        return None
+    return np.asarray(action_queue[0], dtype=float).copy()
+
+
+def _pop_next_policy_action(action_queue, *, rtc_enabled: bool):
+    if rtc_enabled:
+        action = action_queue.get()
+        if action is None:
+            return None
+        return np.asarray(action, dtype=float).copy()
+    if len(action_queue) == 0:
+        return None
+    return np.asarray(action_queue.popleft(), dtype=float).copy()
+
+
+def _write_model_profile_json(path: str | None, *, trace, aggregate) -> None:
+    if not path:
+        return
+    payload = {
+        "single_trace": asdict(trace) if trace is not None else None,
+        "aggregate": asdict(aggregate) if aggregate is not None else None,
+    }
+    output_path = pathlib.Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True))
+
+
+def _write_model_profile_csv(path: str | None, *, trace, aggregate) -> None:
+    if not path:
+        return
+    output_path = pathlib.Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    rows = []
+    if trace is not None:
+        row = {"kind": "single_trace", "mode": trace.mode}
+        row.update(trace.component_ms)
+        rows.append(row)
+    if aggregate is not None:
+        row = {"kind": "aggregate_mean", "mode": aggregate.mode, "runs": aggregate.runs}
+        row.update(aggregate.mean_ms)
+        rows.append(row)
+        std_row = {"kind": "aggregate_std", "mode": aggregate.mode, "runs": aggregate.runs}
+        std_row.update(aggregate.std_ms)
+        rows.append(std_row)
+
+    if not rows:
+        return
+
+    fieldnames = []
+    for row in rows:
+        for key in row:
+            if key not in fieldnames:
+                fieldnames.append(key)
+
+    with output_path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+
+def _write_chunk_handoff_dump(
+    path: str | os.PathLike[str],
+    *,
+    payload: dict[str, np.ndarray | int | str],
+) -> None:
+    output_path = pathlib.Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(output_path, **payload)
 
 # ---------- 子进程：推理循环 ----------
 def inference_worker(
@@ -114,6 +223,10 @@ def inference_worker(
 
     # 1. 只在该进程里加载一次模型 / CUDA
     policy = _policy_config.create_trained_policy(config, checkpoint_dir)
+    profile_collector = ModelLatencyCollector(
+        warmup_remaining=max(int(getattr(args, "profile_model_warmup_runs", 0)), 0),
+        target_runs=max(int(getattr(args, "profile_model_runs", 0)), 0),
+    )
 
     while True:
         item = in_q.get()
@@ -135,21 +248,60 @@ def inference_worker(
         start_time = time.time()
 
         # Prepare RTC kwargs for policy.infer
-        infer_kwargs = {}
-        if rtc_context:
-            infer_kwargs.update(rtc_context)
+        infer_kwargs = build_policy_infer_kwargs(
+            num_steps=args.num_steps,
+            rtc_context=rtc_context,
+            profile_model=args.profile_model_enable,
+        )
 
         result = policy.infer(obs, **infer_kwargs)
         infer_time = time.time() - start_time
         print(f"Step {idx}: infer time = {infer_time:.4f} seconds")
+        model_latency_trace = result.get("model_latency_trace")
         policy_actions = result.get("actions")
         actions = policy_actions
         # Get raw (normalized) model output for RTC prev_actions — this is pre-transform
         raw_actions = result.get("raw_actions")  # normalized, in model output space
         # ── RTC Debug ──
         if rtc_context:
-            print(f"  RTC: inference_delay={rtc_context.get('inference_delay')}, "
-                  f"prev_actions={'set' if rtc_context.get('prev_actions') is not None else 'None'}")
+            print(
+                f"  RTC: mode={rtc_context.get('rtc_config').guidance_mode if rtc_context.get('rtc_config') is not None else 'unknown'}, "
+                f"inference_delay={rtc_context.get('inference_delay')}, "
+                f"prev_actions={'set' if rtc_context.get('prev_actions') is not None else 'None'}, "
+                f"executed_prefix_ref={'set' if rtc_context.get('executed_prefix_ref') is not None else 'None'}"
+            )
+        if model_latency_trace is not None:
+            profile_status = profile_collector.ingest(model_latency_trace)
+            if profile_status == "incomplete":
+                print("  Model profiling: skipped incomplete RTC trace (guidance not active yet)", flush=True)
+            elif profile_status == "warmup":
+                print(
+                    f"  Model profiling: warmup trace skipped ({profile_collector.warmup_remaining} remaining before record)",
+                    flush=True,
+                )
+            elif profile_status in {"recorded_first", "recorded"}:
+                if profile_status == "recorded_first" and profile_collector.single_trace is not None:
+                    print("  Model profiling single trace:", flush=True)
+                    print(format_model_latency_summary(profile_collector.single_trace), flush=True)
+                print(
+                    f"  Model profiling: recorded run {len(profile_collector.traces)}/{profile_collector.target_runs}",
+                    flush=True,
+                )
+                if profile_collector.is_ready():
+                    aggregate = aggregate_model_latency_traces(profile_collector.traces)
+                    print("  Model profiling aggregate:", flush=True)
+                    print(format_model_latency_summary(aggregate), flush=True)
+                    _write_model_profile_json(
+                        args.profile_model_output_json,
+                        trace=profile_collector.single_trace,
+                        aggregate=aggregate,
+                    )
+                    _write_model_profile_csv(
+                        args.profile_model_output_csv,
+                        trace=profile_collector.single_trace,
+                        aggregate=aggregate,
+                    )
+                    profile_collector.report_written = True
         if raw_actions is not None:
             print_action_diagnostics(
                 actions=raw_actions,
@@ -221,7 +373,13 @@ def inference_worker(
                 print_arrays=args.print_action_arrays,
                 print_array_rows=args.print_action_array_rows,
             )
-        out_q.put((idx, actions, raw_actions))
+        b1_diagnostics = None
+        rtc_cfg = infer_kwargs.get("rtc_config")
+        if rtc_cfg is not None and getattr(rtc_cfg, "guidance_mode", "raw_prefix") == "executed_prefix_b1":
+            b1_diagnostics = getattr(rtc_cfg, "last_b1_diagnostics", None)
+            if b1_diagnostics is not None:
+                print(format_b1_guidance_diagnostics(b1_diagnostics), flush=True)
+        out_q.put((idx, actions, raw_actions, b1_diagnostics))
 
 def linear_transition(old_actions, new_actions, max_transition_steps: int = 0):
     """线性插值：h(t)=t"""
@@ -409,6 +567,12 @@ def main():
     parser.add_argument("--max_relative_target", type=int, required=False, default=None)
     parser.add_argument("--use_degrees", action="store_true")
     parser.add_argument("--action_steps", type=int, required=False, default=20, help="number of action steps to execute before next inference")
+    parser.add_argument("--num_steps", type=int, required=False, default=10, help="flow matching denoise steps per inference")
+    parser.add_argument("--profile_model_enable", action="store_true", help="启用模型内部耗时 profiling（PyTorch no-RTC/RTC 共用口径）")
+    parser.add_argument("--profile_model_warmup_runs", type=int, default=1, help="profiling 统计前跳过的 warmup 次数")
+    parser.add_argument("--profile_model_runs", type=int, default=5, help="profiling 统计的有效 inference 次数")
+    parser.add_argument("--profile_model_output_json", type=str, default=None, help="profiling 结果 JSON 输出路径")
+    parser.add_argument("--profile_model_output_csv", type=str, default=None, help="profiling 结果 CSV 输出路径")
     parser.add_argument("--smooth_type", type=str, default="cubic", choices=["none", "linear", "cubic", "quintic", "ema"], help="动作平滑策略: none/linear/cubic/quintic/ema")
     parser.add_argument("--ema_alpha", type=float, default=0.5, help="EMA平滑时新动作权重alpha,0~1")
     parser.add_argument("--transition_steps", type=int, default=0, help="仅对 chunk 边界前 N 步做 transition。0 表示沿用全 overlap transition")
@@ -419,6 +583,14 @@ def main():
     parser.add_argument("--horizon_ema_alpha", type=float, default=0.7, help="horizon EMA alpha 用于 horizon_smooth=ema")
     parser.add_argument("--print_action_arrays", action="store_true", help="打印动作序列预览，便于对比模型原始输出、后处理输出和最终入队动作")
     parser.add_argument("--print_action_array_rows", type=int, default=3, help="动作序列预览时打印的 head/tail 行数")
+    parser.add_argument("--execution_interp_enable", action="store_true", help="仅用于低频 RTC 验证：在发送层对低频策略动作做补帧插值")
+    parser.add_argument("--execution_send_fps", type=float, default=None, help="发送层实际下发频率；默认等于 fps。建议低频验证时设为 20")
+    parser.add_argument("--execution_interp_method", type=str, default="linear", choices=["linear"], help="发送层补帧方式。v1 仅支持 linear")
+    parser.add_argument("--dump_chunk_handoff_enable", action="store_true", help="保存 prior/new chunk handoff 快照到 .npz，供离线可视化分析")
+    parser.add_argument("--dump_chunk_handoff_dir", type=str, default=None, help="chunk handoff .npz 输出目录")
+    parser.add_argument("--dump_chunk_handoff_step_min", type=int, default=None, help="仅保存 step_idx >= 该值的 handoff 快照")
+    parser.add_argument("--dump_chunk_handoff_step_max", type=int, default=None, help="仅保存 step_idx <= 该值的 handoff 快照")
+    parser.add_argument("--dump_chunk_handoff_stride", type=int, default=1, help="每隔 N 个 step_idx 保存一份 handoff 快照")
     # QP-style online optimizer options
     parser.add_argument("--qp_lambda_acc", type=float, default=0.0, help="二阶差分加速惩罚系数（>=0），qp优化时使用。0 表示禁用")
     parser.add_argument("--qp_velocity_limit", type=float, default=0.0, help="可选的每步最大速度（动作单位/step），>0 则启用简单束缚后处理")
@@ -428,11 +600,29 @@ def main():
     parser.add_argument("--rtc_max_guidance_weight", type=float, default=None, help="RTC 最大 guidance 权重 (默认=num_steps)")
     parser.add_argument("--rtc_sigma_d", type=float, default=1.0, help="RTC 先验方差缩放参数")
     parser.add_argument("--rtc_schedule", type=str, default="linear", choices=["zeros", "ones", "linear", "exp"], help="RTC 权重衰减策略")
+    parser.add_argument("--rtc_guidance_mode", type=str, default="executed_prefix_b1", choices=["raw_prefix", "executed_prefix_b1"], help="RTC guidance 目标：旧 raw leftover 或执行空间前缀 B1")
+    parser.add_argument("--rtc_prefix_steps", type=int, default=5, help="B1 执行空间 guidance 的前缀步数")
+    parser.add_argument("--rtc_anchor_weight", type=float, default=1.0, help="B1 第一帧锚定损失权重")
+    parser.add_argument("--rtc_prefix_weight", type=float, default=1.0, help="B1 前缀跟随损失权重")
+    parser.add_argument("--rtc_smooth_weight", type=float, default=0.25, help="B1 前缀平滑损失权重")
+    parser.add_argument("--rtc_stay_weight", type=float, default=0.25, help="B1 guidance 保守系数")
+    parser.add_argument("--rtc_guidance_start_fraction", type=float, default=0.5, help="B1 guidance 在 denoise 后半程开始逐步增强")
+    parser.add_argument("--rtc_arm_joint_dims", type=int, default=6, help="B1 guidance 作用的机械臂关节维度数")
+    parser.add_argument("--rtc_b1_guided_delta_abs_max", type=float, default=5.0, help="B1 最终 guided_delta 的逐元素绝对值上限")
     # speed or pose
     parser.add_argument("--mode", type=str, required=False, default="pose", help="inference mode")
     # jitter seed
     parser.add_argument("--seed", type=int, required=False, default=10002)
     args = parser.parse_args()
+
+    if args.profile_model_enable:
+        logging.warning(
+            "Model profiling enabled: no-RTC breakdown runs through the eager path for instrumentation, "
+            "so component totals are directly comparable to RTC, but absolute no-RTC totals may differ from the compiled fast path."
+        )
+
+    if args.dump_chunk_handoff_enable and not args.dump_chunk_handoff_dir:
+        args.dump_chunk_handoff_dir = str(pathlib.Path("scripts/debug/chunk_handoff_dumps").resolve())
 
     # RTC configuration
     rtc_enabled = args.rtc_enable
@@ -440,29 +630,41 @@ def main():
     if rtc_enabled:
         rtc_config = RTCConfig(
             enabled=True,
+            guidance_mode=args.rtc_guidance_mode,
             prefix_attention_schedule=args.rtc_schedule,
             max_guidance_weight=args.rtc_max_guidance_weight,
             execution_horizon=args.rtc_execution_horizon,
             sigma_d=args.rtc_sigma_d,
+            prefix_steps=args.rtc_prefix_steps,
+            anchor_weight=args.rtc_anchor_weight,
+            prefix_weight=args.rtc_prefix_weight,
+            smooth_weight=args.rtc_smooth_weight,
+            stay_weight=args.rtc_stay_weight,
+            guidance_start_fraction=args.rtc_guidance_start_fraction,
+            arm_joint_dims=args.rtc_arm_joint_dims,
+            b1_guided_delta_abs_max=args.rtc_b1_guided_delta_abs_max,
         )
         if args.smooth_type != "none":
             logging.warning(
-                "RTC enabled: forcing smooth_type=none because chunk-transition postprocessing would change the executed trajectory outside RTC's raw-action alignment."
+                "RTC enabled: forcing smooth_type=none because transition patching would fight with model-side RTC guidance."
             )
             args.smooth_type = "none"
-        if args.horizon_smooth != "none":
-            logging.warning(
-                "RTC enabled: forcing horizon_smooth=none because RTC guidance assumes the leftover tail matches model raw outputs; horizon postprocessing would break that correspondence."
-            )
-            args.horizon_smooth = "none"
+        if args.transition_steps != 0:
+            logging.warning("RTC enabled: forcing transition_steps=0")
+            args.transition_steps = 0
         if args.qp_lambda_acc and args.qp_lambda_acc > 0:
             logging.warning(
-                "RTC enabled: forcing qp_lambda_acc=0 because QP postprocessing would change the executed tail without feeding the same processed trajectory back into RTC."
+                "RTC enabled: forcing qp_lambda_acc=0 because QP postprocessing would change the executed tail outside the model-side RTC objective."
             )
             args.qp_lambda_acc = 0.0
         if args.align_mode != "step":
             logging.warning("RTC enabled: forcing align_mode=step")
             args.align_mode = "step"
+        if rtc_config.guidance_mode == "raw_prefix" and args.horizon_smooth != "none":
+            logging.warning(
+                "raw RTC enabled: forcing horizon_smooth=none because raw-prefix guidance assumes the leftover tail matches model raw outputs."
+            )
+            args.horizon_smooth = "none"
         logging.info(f"RTC enabled: {rtc_config}")
         logging.info(f"smooth_type={args.smooth_type}, horizon_smooth={args.horizon_smooth}")
 
@@ -515,7 +717,24 @@ def main():
 
     # rows = []
     step = 1
-    step_time = step/(args.fps)
+    execution_send_fps = float(args.execution_send_fps if args.execution_send_fps is not None else args.fps)
+    execution_interp_enabled = bool(args.execution_interp_enable and execution_send_fps > float(args.fps))
+    execution_resampler = None
+    if execution_interp_enabled:
+        execution_resampler = ExecutionResampler(
+            policy_fps=float(args.fps),
+            send_fps=execution_send_fps,
+            arm_joint_dims=6,
+            interp_method=args.execution_interp_method,
+        )
+        logging.info(
+            "execution interpolation enabled: policy_fps=%s send_fps=%s method=%s ratio=%s",
+            args.fps,
+            execution_send_fps,
+            args.execution_interp_method,
+            execution_resampler.send_steps_per_policy_step,
+        )
+    step_time = step / (execution_send_fps if execution_interp_enabled else args.fps)
     prompt = args.task
     tokenizer = PaligemmaTokenizer()
     tokenized, mask = tokenizer.tokenize(prompt)
@@ -523,6 +742,8 @@ def main():
     if rtc_enabled:
         action_queue = RTCActionQueue(enabled=True)
         rtc_delay_estimate = 0
+        rtc_delay_estimate_valid = False
+        rtc_b1_delay_estimate_valid = False
         inflight_rtc_request = None
     else:
         action_queue = collections.deque()  # 存储当前动作序列
@@ -530,6 +751,10 @@ def main():
     action_step_counter = 0  # 记录已执行的动作步数
     first = True
     inflight_state_for_logging = None
+    last_sent_action = None
+    last_policy_action = None
+    last_raw_chunk_for_dump = None
+    last_executed_chunk_for_dump = None
 
     # robot.send_action_np(np.array([-7980, 20113, -2285, -7921, 37285,  1023,     0.]))
     # time.sleep(1)
@@ -577,24 +802,49 @@ def main():
             rtc_ctx = None
             if rtc_enabled:
                 prev_actions = action_queue.get_left_over()
+                processed_leftover = action_queue.get_processed_left_over()
                 action_index_before_inference = action_queue.get_action_index()
                 leftover_len_at_send = 0 if prev_actions is None else len(prev_actions)
                 inflight_rtc_request = {
                     "action_index_before_inference": action_index_before_inference,
                     "leftover_len_at_send": leftover_len_at_send,
                 }
+                executed_prefix_reference = None
+                executed_prefix_prev = None
+                executed_prefix_ref = None
+                request_delay_estimate = rtc_delay_estimate
+                if rtc_config.guidance_mode == "executed_prefix_b1" and rtc_delay_estimate_valid:
+                    request_delay_estimate = get_b1_inference_delay_estimate(
+                        base_delay_estimate=rtc_delay_estimate,
+                        b1_delay_estimate_valid=rtc_b1_delay_estimate_valid,
+                    )
+                    executed_prefix_reference = build_executed_prefix_reference(
+                        processed_leftover=processed_leftover,
+                        current_state=state7,
+                        inference_delay_estimate=request_delay_estimate,
+                        prefix_steps=rtc_config.prefix_steps,
+                        action_horizon=config.model.action_horizon,
+                        arm_joint_dims=rtc_config.arm_joint_dims,
+                    )
+                    if executed_prefix_reference is not None:
+                        executed_prefix_prev = executed_prefix_reference.executed_prefix_prev
+                        executed_prefix_ref = executed_prefix_reference.executed_prefix_ref
                 rtc_ctx = {
                     "rtc_config": rtc_config,
                     "prev_actions": prev_actions,
-                    "inference_delay": rtc_delay_estimate,
+                    "inference_delay": request_delay_estimate,
+                    "executed_prefix_prev": executed_prefix_prev,
+                    "executed_prefix_ref": executed_prefix_ref,
                 }
                 logging.debug(
-                    "RTC request #%s: action_index_before_inference=%s, leftover_len_at_send=%s, delay_estimate=%s, prev_actions=%s",
+                    "RTC request #%s: action_index_before_inference=%s, leftover_len_at_send=%s, delay_estimate=%s, prev_actions=%s, executed_prefix_ref=%s, b1_delay_estimate_valid=%s",
                     sent_idx,
                     action_index_before_inference,
                     leftover_len_at_send,
-                    rtc_delay_estimate,
+                    request_delay_estimate,
                     "set" if prev_actions is not None else "none",
+                    "set" if executed_prefix_ref is not None else "none",
+                    rtc_b1_delay_estimate_valid,
                 )
             try:
                 if rtc_ctx is not None:
@@ -613,8 +863,12 @@ def main():
         # 2. 如果有新推理结果，立即清空并更新 action_queue
         try:
             result_tuple = out_q.get_nowait()
-            # Worker returns (idx, actions, raw_actions)
-            idx, action_vals, raw_action_vals = result_tuple
+            b1_diagnostics = None
+            # Worker returns (idx, actions, raw_actions, b1_diagnostics)
+            if isinstance(result_tuple, tuple) and len(result_tuple) == 4:
+                idx, action_vals, raw_action_vals, b1_diagnostics = result_tuple
+            else:
+                idx, action_vals, raw_action_vals = result_tuple
             recv_idx = idx
             logging.debug(f"got result #{recv_idx}")
 
@@ -637,8 +891,21 @@ def main():
                     old_actions_arr = action_queue.get_processed_left_over()
                     real_delay = max(action_queue.get_action_index() - action_index_before_inference, 0)
                     rtc_delay_estimate = real_delay
+                    rtc_delay_estimate_valid = should_mark_rtc_delay_estimate_valid(leftover_len_at_send)
+                    if b1_diagnostics is not None:
+                        rtc_b1_delay_estimate_valid = True
                     new_actions = np.asarray(action_vals)
                     raw_action_vals = np.asarray(raw_action_vals)
+                    if not (np.isfinite(new_actions).all() and np.isfinite(raw_action_vals).all()):
+                        logging.warning(
+                            "RTC result #%s contains non-finite values; dropping chunk and keeping the existing queue.",
+                            recv_idx,
+                        )
+                        waiting_for_infer = False
+                        inflight_rtc_request = None
+                        if action_queue.empty():
+                            action_step_counter = max(action_step_counter, args.action_steps)
+                        continue
                     rtc_stats = compute_rtc_runtime_stats(
                         prev_raw_left_over=old_raw_actions_arr,
                         prev_processed_left_over=old_actions_arr,
@@ -651,9 +918,20 @@ def main():
                     )
 
                     print(format_rtc_runtime_stats(rtc_stats, chunk_idx=recv_idx), flush=True)
-                    warning_reasons = get_rtc_boundary_risks(rtc_stats)
-                    if warning_reasons:
-                        print(f"  RTC boundary risk: {'; '.join(warning_reasons)}", flush=True)
+                    if b1_diagnostics is not None:
+                        print(format_b1_guidance_diagnostics(b1_diagnostics, real_delay=real_delay), flush=True)
+                        b1_boundary_status = compute_b1_boundary_window_status(b1_diagnostics, real_delay=real_delay)
+                        print(format_b1_boundary_window_status(b1_boundary_status), flush=True)
+                        if not b1_boundary_status.boundary_hit:
+                            print(
+                                f"  RTC B1 boundary risk: real boundary fell outside the guided window by "
+                                f"{b1_boundary_status.miss_steps} step(s)",
+                                flush=True,
+                            )
+                    elif rtc_config.guidance_mode != "executed_prefix_b1":
+                        warning_reasons = get_rtc_boundary_risks(rtc_stats)
+                        if warning_reasons:
+                            print(f"  RTC boundary risk: {'; '.join(warning_reasons)}", flush=True)
 
                     action_queue.merge(
                         raw_action_vals,
@@ -661,6 +939,45 @@ def main():
                         real_delay=real_delay,
                         action_index_before_inference=action_index_before_inference,
                     )
+                    rtc_queue_head = action_queue.get_processed_left_over()
+                    rtc_boundary_stats = compute_boundary_jump_stats(
+                        previous_action=last_policy_action,
+                        next_action=rtc_queue_head[0] if rtc_queue_head is not None and len(rtc_queue_head) > 0 else None,
+                        joint_dims=6,
+                    )
+                    print(format_boundary_jump_stats(rtc_boundary_stats, label="queue_boundary"), flush=True)
+                    current_raw_chunk_for_dump = None if raw_action_vals is None else np.asarray(raw_action_vals, dtype=np.float32)
+                    current_executed_chunk_for_dump = None if new_actions is None else np.asarray(new_actions, dtype=np.float32)
+                    if (
+                        last_raw_chunk_for_dump is not None
+                        and last_executed_chunk_for_dump is not None
+                        and should_dump_chunk_handoff(
+                            recv_idx,
+                            enabled=args.dump_chunk_handoff_enable,
+                            step_min=args.dump_chunk_handoff_step_min,
+                            step_max=args.dump_chunk_handoff_step_max,
+                            stride=args.dump_chunk_handoff_stride,
+                        )
+                    ):
+                        guided_window_start = -1 if b1_diagnostics is None else int(b1_diagnostics.guided_window_start)
+                        dump_payload = build_chunk_handoff_dump_payload(
+                            step_idx=recv_idx,
+                            mode="rtc",
+                            real_delay=real_delay,
+                            guided_window_start=guided_window_start,
+                            prior_start_index=0,
+                            new_start_index=action_index_before_inference,
+                            handoff_index=real_delay,
+                            raw_prior=last_raw_chunk_for_dump,
+                            raw_new=current_raw_chunk_for_dump,
+                            executed_prior=last_executed_chunk_for_dump,
+                            executed_new=current_executed_chunk_for_dump,
+                        )
+                        dump_path = pathlib.Path(args.dump_chunk_handoff_dir) / f"step_{recv_idx:06d}_mode_rtc.npz"
+                        _write_chunk_handoff_dump(dump_path, payload=dump_payload)
+                        print(f"  chunk_handoff_dump: saved {dump_path}", flush=True)
+                    last_raw_chunk_for_dump = current_raw_chunk_for_dump
+                    last_executed_chunk_for_dump = current_executed_chunk_for_dump
                     waiting_for_infer = False
                     inflight_rtc_request = None
             else:
@@ -772,11 +1089,45 @@ def main():
                 else:
                     raise ValueError(f"Unknown smooth_type: {args.smooth_type}")
                 boundary_stats = compute_boundary_jump_stats(
-                    previous_action=old_actions[0] if len(old_actions) > 0 else None,
+                    previous_action=last_policy_action,
                     next_action=smooth_actions[0] if len(smooth_actions) > 0 else None,
                     joint_dims=6,
                 )
                 print(format_boundary_jump_stats(boundary_stats, label="queue_boundary"), flush=True)
+                current_raw_chunk_for_dump = None
+                if raw_action_vals is not None:
+                    current_raw_chunk_for_dump = np.asarray(raw_action_vals[start_idx:], dtype=np.float32)
+                current_executed_chunk_for_dump = np.asarray(smooth_actions, dtype=np.float32)
+                if (
+                    last_raw_chunk_for_dump is not None
+                    and last_executed_chunk_for_dump is not None
+                    and should_dump_chunk_handoff(
+                        recv_idx,
+                        enabled=args.dump_chunk_handoff_enable,
+                        step_min=args.dump_chunk_handoff_step_min,
+                        step_max=args.dump_chunk_handoff_step_max,
+                        stride=args.dump_chunk_handoff_stride,
+                    )
+                ):
+                    consumed_prior_steps = max(len(last_executed_chunk_for_dump) - len(old_actions), 0)
+                    dump_payload = build_chunk_handoff_dump_payload(
+                        step_idx=recv_idx,
+                        mode="no_rtc",
+                        real_delay=0,
+                        guided_window_start=-1,
+                        prior_start_index=0,
+                        new_start_index=consumed_prior_steps,
+                        handoff_index=0,
+                        raw_prior=last_raw_chunk_for_dump,
+                        raw_new=current_raw_chunk_for_dump,
+                        executed_prior=last_executed_chunk_for_dump,
+                        executed_new=current_executed_chunk_for_dump,
+                    )
+                    dump_path = pathlib.Path(args.dump_chunk_handoff_dir) / f"step_{recv_idx:06d}_mode_no_rtc.npz"
+                    _write_chunk_handoff_dump(dump_path, payload=dump_payload)
+                    print(f"  chunk_handoff_dump: saved {dump_path}", flush=True)
+                last_raw_chunk_for_dump = current_raw_chunk_for_dump
+                last_executed_chunk_for_dump = current_executed_chunk_for_dump
                 print_action_diagnostics(
                     actions=np.asarray(smooth_actions),
                     range_label="queue_actions (post_transition)",
@@ -796,17 +1147,59 @@ def main():
             pass
 
         # 3. 如果 action_queue 有动作，发给 robot
-        if rtc_enabled:
-            action_to_send = action_queue.get()
-            has_action = action_to_send is not None
+        action_to_send = None
+        has_action = False
+        policy_action_consumed = False
+        consumed_policy_action = None
+        if execution_interp_enabled:
+            if execution_resampler is None:
+                raise RuntimeError("execution interpolation enabled without a resampler")
+            if execution_resampler.needs_policy_action():
+                next_policy_action = _pop_next_policy_action(action_queue, rtc_enabled=rtc_enabled)
+                if next_policy_action is not None:
+                    next_policy_action = np.asarray(next_policy_action[:7], dtype=float)
+                    execution_resampler.start_policy_step(next_policy_action)
+                    policy_action_consumed = True
+                    consumed_policy_action = next_policy_action.copy()
+                elif execution_resampler.current_policy_action is not None:
+                    action_to_send = execution_resampler.hold_current()
+                    has_action = True
+            if not has_action and execution_resampler.current_policy_action is not None:
+                upcoming_policy_action = _peek_next_policy_action(action_queue, rtc_enabled=rtc_enabled)
+                if upcoming_policy_action is not None:
+                    upcoming_policy_action = np.asarray(upcoming_policy_action[:7], dtype=float)
+                action_to_send = execution_resampler.sample(next_policy_action=upcoming_policy_action)
+                has_action = True
         else:
-            has_action = bool(action_queue)
-            action_to_send = action_queue.popleft() if has_action else None
+            if rtc_enabled:
+                action_to_send = action_queue.get()
+                has_action = action_to_send is not None
+            else:
+                has_action = bool(action_queue)
+                action_to_send = action_queue.popleft() if has_action else None
+            if has_action:
+                action_to_send = np.asarray(action_to_send[:7], dtype=float)
+                consumed_policy_action = action_to_send.copy()
         if has_action:
+            if not np.isfinite(action_to_send).all():
+                logging.warning("dropping non-finite action before sending to robot")
+                if rtc_enabled and action_queue.empty() and not waiting_for_infer:
+                    action_step_counter = max(action_step_counter, args.action_steps)
+                continue
+            if execution_interp_enabled and policy_action_consumed:
+                send_boundary_stats = compute_boundary_jump_stats(
+                    previous_action=last_sent_action,
+                    next_action=action_to_send,
+                    joint_dims=6,
+                )
+                print(format_boundary_jump_stats(send_boundary_stats, label="send_boundary"), flush=True)
             if print_log:
                 logger.log(action_to_send[:7])
             robot.send_action_np(action_to_send[:7])
-            action_step_counter += 1
+            last_sent_action = action_to_send.copy()
+            if consumed_policy_action is not None:
+                last_policy_action = consumed_policy_action.copy()
+                action_step_counter += 1
             # print(f'publish an action:{time.perf_counter()},action counter:{action_step_counter}')
 
         # 2.5 统计

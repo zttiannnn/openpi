@@ -175,3 +175,4 @@ logs/
 .idea/
 
 *.npz
+scripts/debug

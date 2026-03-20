@@ -1,0 +1,75 @@
+{
+  "single_trace": {
+    "mode": "rtc",
+    "component_ms": {
+      "image_encoders_ms": 31.389382000270416,
+      "llm_prefill_ms": 102.16817499986064,
+      "rtc_decode_ms": 5.358487999728823,
+      "rtc_loss_ms": 3.1585200003974023,
+      "rtc_autograd_ms": 285.90110799905233,
+      "rtc_diag_ms": 18.422725000164064,
+      "rtc_guidance_total_ms": 577.3714219985777,
+      "total_model_ms": 830.1142079999408,
+      "denoising_total_ms": 690.41171400022,
+      "denoising_step_mean_ms": 69.041171400022
+    },
+    "sample_ms": {
+      "denoising_step_trace_ms": [
+        31.326220999289944,
+        31.621455999811587,
+        28.896590999465843,
+        79.22214800055372,
+        85.63495300040813,
+        87.05348500006949,
+        88.36307399997168,
+        83.93445899946528,
+        88.60774900040269,
+        85.75157800078159
+      ]
+    },
+    "metadata": {
+      "num_steps": 10,
+      "compiled_path": 0
+    }
+  },
+  "aggregate": {
+    "mode": "rtc",
+    "runs": 5,
+    "mean_ms": {
+      "denoising_step_mean_ms": 67.11778470000354,
+      "denoising_total_ms": 671.1778470000354,
+      "image_encoders_ms": 31.102958799965563,
+      "llm_prefill_ms": 106.2240182000096,
+      "rtc_autograd_ms": 271.0275671992349,
+      "rtc_decode_ms": 4.830797599788639,
+      "rtc_diag_ms": 22.09839440001815,
+      "rtc_guidance_total_ms": 560.1888223995047,
+      "rtc_loss_ms": 3.1864119999227114,
+      "total_model_ms": 814.253500400082
+    },
+    "std_ms": {
+      "denoising_step_mean_ms": 7.664110980053104,
+      "denoising_total_ms": 76.64110980053104,
+      "image_encoders_ms": 0.7113058042851373,
+      "llm_prefill_ms": 2.257837460149257,
+      "rtc_autograd_ms": 35.52735495045793,
+      "rtc_decode_ms": 0.6229685479649067,
+      "rtc_diag_ms": 4.268071341049017,
+      "rtc_guidance_total_ms": 72.03722050825017,
+      "rtc_loss_ms": 0.3393542094479476,
+      "total_model_ms": 76.39591676761304
+    },
+    "counts": {
+      "denoising_step_mean_ms": 5,
+      "denoising_total_ms": 5,
+      "image_encoders_ms": 5,
+      "llm_prefill_ms": 5,
+      "rtc_autograd_ms": 5,
+      "rtc_decode_ms": 5,
+      "rtc_diag_ms": 5,
+      "rtc_guidance_total_ms": 5,
+      "rtc_loss_ms": 5,
+      "total_model_ms": 5
+    }
+  }
+}

@@ -1,0 +1,1 @@
+bash: openpi/scripts/debug/inference_sync_clear.sh: No such file or directory
