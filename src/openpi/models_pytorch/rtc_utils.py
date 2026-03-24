@@ -21,10 +21,14 @@ class RTCConfig:
 
     # Whether RTC is enabled
     enabled: bool = False
-    # Guidance target: "raw_prefix" preserves the previous RTC behavior, while
-    # "executed_prefix_b1" guides denoising using the executed joint-space prefix.
+    # Guidance target: "raw_prefix" preserves the previous RTC behavior,
+    # "raw_prefix_paper" applies a more paper-faithful overlap-aware raw RTC
+    # mask, "executed_overlap_paper" applies the same overlap window in
+    # executed joint space, while "executed_prefix_b1" guides denoising using
+    # the executed joint-space prefix.
     guidance_mode: str = "raw_prefix"
-    # Attention schedule for prefix weights: "zeros" | "ones" | "linear" | "exp"
+    # Attention schedule for prefix weights:
+    # "auto" | "zeros" | "ones" | "linear" | "exp"
     prefix_attention_schedule: str = "linear"
     # Max guidance weight (if None, defaults to num_steps)
     max_guidance_weight: float | None = None
@@ -119,6 +123,10 @@ class RTCRuntimeStats:
     overlap_len: int
     overlap_l2_before: float | None
     overlap_l2_after: float | None
+    guidance_end: int | None = None
+    raw_guidance_end: int | None = None
+    resolved_schedule: str | None = None
+    legacy_effective_guided_steps: int | None = None
 
 
 @dataclass(frozen=True)
@@ -563,6 +571,29 @@ def get_prefix_weights(
     return weights
 
 
+def resolve_rtc_schedule(schedule: str, guidance_mode: str) -> str:
+    """Resolve RTC schedule aliases to a concrete weight schedule."""
+    if schedule != "auto":
+        return schedule
+    if guidance_mode in {"raw_prefix_paper", "executed_overlap_paper"}:
+        return "exp"
+    return "linear"
+
+
+def get_raw_rtc_guidance_end(
+    *,
+    guidance_mode: str,
+    execution_horizon: int,
+    available_overlap: int,
+    action_chunk_size: int,
+) -> int:
+    """Resolve the raw RTC mask endpoint for the selected guidance mode."""
+    available_overlap = min(max(int(available_overlap), 0), max(int(action_chunk_size), 0))
+    if guidance_mode == "raw_prefix_paper":
+        return available_overlap
+    return min(max(int(execution_horizon), 0), available_overlap)
+
+
 def _compute_overlap_l2(
     previous_actions: np.ndarray | None,
     new_actions: np.ndarray | None,
@@ -598,6 +629,8 @@ def compute_rtc_runtime_stats(
     leftover_len_at_send: int,
     rtc_execution_horizon: int,
     action_index_before_inference: int,
+    guidance_mode: str = "raw_prefix",
+    prefix_attention_schedule: str = "linear",
 ) -> RTCRuntimeStats:
     """Summarize whether RTC still has effective overlap at chunk handoff.
 
@@ -616,7 +649,32 @@ def compute_rtc_runtime_stats(
         new_processed_actions,
         real_delay,
     )
-    effective_guided_steps = max(0, min(leftover_len_at_send, rtc_execution_horizon) - real_delay)
+    legacy_effective_guided_steps = max(0, min(leftover_len_at_send, rtc_execution_horizon) - real_delay)
+    effective_guided_steps = legacy_effective_guided_steps
+    guidance_end = None
+    raw_guidance_end = None
+    resolved_schedule = None
+
+    if guidance_mode in {"raw_prefix", "raw_prefix_paper"}:
+        prev_raw_len = 0 if prev_raw_left_over is None else len(np.asarray(prev_raw_left_over, dtype=np.float32))
+        new_raw_len = 0 if new_raw_actions is None else len(np.asarray(new_raw_actions, dtype=np.float32))
+        available_overlap = min(prev_raw_len, new_raw_len)
+        guidance_end = get_raw_rtc_guidance_end(
+            guidance_mode=guidance_mode,
+            execution_horizon=rtc_execution_horizon,
+            available_overlap=available_overlap,
+            action_chunk_size=new_raw_len,
+        )
+        raw_guidance_end = guidance_end
+        resolved_schedule = resolve_rtc_schedule(prefix_attention_schedule, guidance_mode)
+        effective_guided_steps = max(0, min(leftover_len_at_send, guidance_end) - real_delay)
+    elif guidance_mode == "executed_overlap_paper":
+        prev_processed_len = 0 if prev_processed_left_over is None else len(np.asarray(prev_processed_left_over, dtype=np.float32))
+        new_processed_len = 0 if new_processed_actions is None else len(np.asarray(new_processed_actions, dtype=np.float32))
+        guidance_end = min(prev_processed_len, new_processed_len)
+        resolved_schedule = resolve_rtc_schedule(prefix_attention_schedule, guidance_mode)
+        effective_guided_steps = max(0, min(leftover_len_at_send, guidance_end) - real_delay)
+
     overlap_len = processed_overlap_len if processed_overlap_len > 0 else raw_overlap_len
 
     return RTCRuntimeStats(
@@ -628,6 +686,10 @@ def compute_rtc_runtime_stats(
         overlap_len=overlap_len,
         overlap_l2_before=raw_overlap_l2,
         overlap_l2_after=processed_overlap_l2,
+        guidance_end=guidance_end,
+        raw_guidance_end=raw_guidance_end,
+        resolved_schedule=resolved_schedule,
+        legacy_effective_guided_steps=legacy_effective_guided_steps,
     )
 
 
@@ -637,7 +699,7 @@ def format_rtc_runtime_stats(stats: RTCRuntimeStats, *, chunk_idx: int | None = 
     prefix = "  RTC result:" if chunk_idx is None else f"  RTC result #{chunk_idx}:"
     overlap_l2_before = "n/a" if stats.overlap_l2_before is None else f"{stats.overlap_l2_before:.6f}"
     overlap_l2_after = "n/a" if stats.overlap_l2_after is None else f"{stats.overlap_l2_after:.6f}"
-    return (
+    message = (
         f"{prefix} action_index_before_inference={stats.action_index_before_inference} "
         f"leftover_len_at_send={stats.leftover_len_at_send} "
         f"real_delay={stats.real_delay} "
@@ -647,6 +709,21 @@ def format_rtc_runtime_stats(stats: RTCRuntimeStats, *, chunk_idx: int | None = 
         f"overlap_l2_before={overlap_l2_before} "
         f"overlap_l2_after={overlap_l2_after}"
     )
+    effective_guidance_end = stats.guidance_end if stats.guidance_end is not None else stats.raw_guidance_end
+    guidance_end_label = "raw_guidance_end" if stats.raw_guidance_end is not None else "guidance_end"
+    if (
+        effective_guidance_end is not None
+        and (
+            effective_guidance_end != stats.rtc_execution_horizon
+            or stats.legacy_effective_guided_steps not in (None, stats.effective_guided_steps)
+        )
+    ):
+        message = (
+            f"{message} {guidance_end_label}={effective_guidance_end} "
+            f"resolved_schedule={stats.resolved_schedule} "
+            f"legacy_effective_guided_steps={stats.legacy_effective_guided_steps}"
+        )
+    return message
 
 
 def get_rtc_boundary_risks(stats: RTCRuntimeStats) -> list[str]:
@@ -655,7 +732,11 @@ def get_rtc_boundary_risks(stats: RTCRuntimeStats) -> list[str]:
     reasons: list[str] = []
     if stats.leftover_len_at_send > 0 and stats.real_delay >= stats.leftover_len_at_send:
         reasons.append("delay exhausted leftover tail before the new chunk arrived")
-    if stats.rtc_execution_horizon > 0 and stats.real_delay >= stats.rtc_execution_horizon:
+    effective_guidance_end = stats.guidance_end if stats.guidance_end is not None else stats.raw_guidance_end
+    if effective_guidance_end is not None and effective_guidance_end > 0:
+        if stats.real_delay >= effective_guidance_end:
+            reasons.append("delay exceeded raw_guidance_end" if stats.raw_guidance_end is not None else "delay exceeded guidance_end")
+    elif stats.rtc_execution_horizon > 0 and stats.real_delay >= stats.rtc_execution_horizon:
         reasons.append("delay exceeded rtc_execution_horizon")
     if stats.effective_guided_steps <= 0:
         reasons.append("no effective guided steps remain at the executed boundary")
@@ -1173,6 +1254,36 @@ def get_b1_inference_delay_estimate(
     return max(base_delay_estimate, int(math.ceil(base_delay_estimate * warmup_multiplier)))
 
 
+def get_conservative_rtc_delay_estimate(
+    *,
+    base_delay_estimate: int,
+    delay_history: Sequence[int],
+    available_overlap: int | None = None,
+    min_history: int = 4,
+    warmup_multiplier: float = 2.0,
+) -> int:
+    """Build a conservative runtime delay estimate from recent observed delays."""
+
+    estimate = max(int(base_delay_estimate), 0)
+    history = [max(int(delay), 0) for delay in delay_history]
+    if history:
+        latest_delay = history[-1]
+        p75_delay = int(math.ceil(float(np.quantile(np.asarray(history, dtype=np.float32), 0.75))))
+        estimate = max(estimate, latest_delay, p75_delay)
+
+    if len(history) < max(int(min_history), 0):
+        estimate = get_b1_inference_delay_estimate(
+            base_delay_estimate=estimate,
+            b1_delay_estimate_valid=False,
+            warmup_multiplier=warmup_multiplier,
+        )
+
+    if available_overlap is not None:
+        estimate = min(estimate, max(int(available_overlap), 0))
+
+    return estimate
+
+
 def get_b1_guided_window_start(
     *,
     inference_delay_estimate: int,
@@ -1343,6 +1454,7 @@ def apply_rtc_guidance(
     execution_horizon: int | None = None,
     executed_prefix_prev: torch.Tensor | np.ndarray | None = None,
     executed_prefix_ref: torch.Tensor | np.ndarray | None = None,
+    processed_leftover: torch.Tensor | np.ndarray | None = None,
     observation_state: torch.Tensor | np.ndarray | None = None,
     executed_prefix_transform_spec: RTCExecutedPrefixTransformSpec | None = None,
     profiler: ModelLatencyProfiler | None = None,
@@ -1563,6 +1675,132 @@ def apply_rtc_guidance(
             result = result.squeeze(0)
         return result
 
+    if rtc_config.guidance_mode == "executed_overlap_paper":
+        if processed_leftover is None or observation_state is None or executed_prefix_transform_spec is None:
+            return _return_baseline()
+
+        processed_target = _ensure_batched_tensor(_as_float_tensor(processed_leftover, device=x_t.device), dims=3)
+        state = _ensure_batched_tensor(_as_float_tensor(observation_state, device=x_t.device), dims=2)
+        if processed_target is None or state is None:
+            return _return_baseline()
+
+        processed_target = _expand_batch(processed_target, x_t.shape[0])
+        state = _expand_batch(state, x_t.shape[0])
+        if not (torch.isfinite(processed_target).all() and torch.isfinite(state).all()):
+            return _return_baseline()
+
+        guidance_ramp = _compute_b1_guidance_ramp(time_tensor, rtc_config.guidance_start_fraction)
+        if torch.all(guidance_ramp <= 0):
+            return _return_baseline()
+
+        guidance_timer = _start_timer(x_t.device) if profiler is not None and profiler.enabled else None
+        with torch.enable_grad():
+            x_t.requires_grad_(True)
+            v_t = original_denoise_step_partial(x_t)
+            x1_t = x_t - time_tensor * v_t
+            decode_timer = _start_timer(x_t.device) if guidance_timer is not None else None
+            decoded = decode_actions_to_executed_prefix_torch(
+                x1_t,
+                observation_state=state,
+                transform_spec=executed_prefix_transform_spec,
+            )
+            if decode_timer is not None:
+                profiler.add_duration("rtc_decode_ms", _finish_timer_ms(decode_timer, x_t.device))
+            if not torch.isfinite(decoded).all():
+                return _return_baseline()
+
+            available_overlap = min(decoded.shape[1], processed_target.shape[1])
+            arm_joint_dims = min(int(rtc_config.arm_joint_dims), decoded.shape[-1], processed_target.shape[-1])
+            if available_overlap <= 0 or arm_joint_dims <= 0:
+                result = v_t
+                if squeezed:
+                    result = result.squeeze(0)
+                return result
+
+            guidance_end = available_overlap
+            resolved_schedule = resolve_rtc_schedule(
+                rtc_config.prefix_attention_schedule,
+                rtc_config.guidance_mode,
+            )
+            weights = get_prefix_weights(
+                start=int(inference_delay),
+                end=guidance_end,
+                total=available_overlap,
+                schedule=resolved_schedule,
+            ).to(x_t.device)
+            if not torch.any(weights > 0):
+                result = v_t
+                if squeezed:
+                    result = result.squeeze(0)
+                return result
+
+            z = decoded[:, :available_overlap, :arm_joint_dims]
+            target = processed_target[:, :available_overlap, :arm_joint_dims]
+            if not (torch.isfinite(z).all() and torch.isfinite(target).all()):
+                return _return_baseline()
+
+            loss_scale = get_executed_prefix_loss_scale_torch(
+                executed_prefix_transform_spec,
+                device=x_t.device,
+                arm_joint_dims=arm_joint_dims,
+            )
+            loss_timer = _start_timer(x_t.device) if guidance_timer is not None else None
+            z_scaled = z / loss_scale.view(1, 1, -1)
+            target_scaled = target / loss_scale.view(1, 1, -1)
+            weights = weights.view(1, -1, 1)
+            weighted_error = (z_scaled - target_scaled).square() * weights
+            denom = torch.clamp(weights.sum(), min=1e-6) * arm_joint_dims * max(int(z.shape[0]), 1)
+            total_loss = weighted_error.sum() / denom
+            if loss_timer is not None:
+                profiler.add_duration("rtc_loss_ms", _finish_timer_ms(loss_timer, x_t.device))
+
+            if not torch.isfinite(total_loss):
+                return _return_baseline()
+            if float(total_loss.detach().item()) == 0.0:
+                result = v_t
+                if squeezed:
+                    result = result.squeeze(0)
+                return result
+
+            autograd_timer = _start_timer(x_t.device) if guidance_timer is not None else None
+            correction = torch.autograd.grad(total_loss, x_t, retain_graph=False)[0]
+            if autograd_timer is not None:
+                profiler.add_duration("rtc_autograd_ms", _finish_timer_ms(autograd_timer, x_t.device))
+            correction = torch.nan_to_num(correction, nan=0.0, posinf=0.0, neginf=0.0)
+            correction_norm = torch.linalg.vector_norm(correction.reshape(correction.shape[0], -1), dim=1, keepdim=True)
+            max_correction_norm = math.sqrt(float(max(available_overlap * arm_joint_dims, 1)))
+            correction_scale = torch.clamp(max_correction_norm / correction_norm.clamp_min(1e-6), max=1.0)
+            correction = correction * correction_scale.view(-1, 1, 1)
+
+        max_guidance_weight = rtc_config.max_guidance_weight
+        if max_guidance_weight is None:
+            max_guidance_weight = 1.0
+
+        max_guidance_weight = torch.as_tensor(max_guidance_weight, dtype=torch.float32, device=x_t.device)
+        tau_tensor = torch.as_tensor(tau, dtype=torch.float32, device=x_t.device)
+        squared_one_minus_tau = (1 - tau_tensor) ** 2
+        prior_variance = torch.as_tensor(rtc_config.sigma_d**2, dtype=torch.float32, device=x_t.device)
+        inv_r2 = (squared_one_minus_tau + tau_tensor**2 * prior_variance) / (squared_one_minus_tau * prior_variance)
+        c = torch.nan_to_num((1 - tau_tensor) / tau_tensor, posinf=max_guidance_weight)
+        guidance_weight = torch.nan_to_num(c * inv_r2, posinf=max_guidance_weight)
+        guidance_weight = torch.minimum(guidance_weight, max_guidance_weight)
+        conservative_scale = guidance_ramp / (1.0 + max(float(rtc_config.stay_weight), 0.0))
+
+        guided_delta = guidance_weight * conservative_scale * correction
+        guided_delta = torch.nan_to_num(guided_delta, nan=0.0, posinf=0.0, neginf=0.0)
+        guided_delta_abs_max = max(float(rtc_config.b1_guided_delta_abs_max), 0.0)
+        guided_delta = torch.clamp(guided_delta, min=-guided_delta_abs_max, max=guided_delta_abs_max)
+        result = v_t + guided_delta
+        if not torch.isfinite(result).all():
+            return _return_baseline()
+
+        if guidance_timer is not None:
+            profiler.add_duration("rtc_guidance_total_ms", _finish_timer_ms(guidance_timer, x_t.device))
+
+        if squeezed:
+            result = result.squeeze(0)
+        return result
+
     if prev_chunk_left_over is None:
         return _return_baseline()
 
@@ -1572,11 +1810,18 @@ def apply_rtc_guidance(
     if prev_chunk_left_over.ndim < 3:
         prev_chunk_left_over = prev_chunk_left_over.unsqueeze(0)
 
+    batch_size, action_chunk_size, action_dim = x_t.shape
+    available_overlap = min(prev_chunk_left_over.shape[1], action_chunk_size)
     if execution_horizon is None:
         execution_horizon = rtc_config.execution_horizon
-    execution_horizon = min(execution_horizon, prev_chunk_left_over.shape[1])
+    guidance_end = get_raw_rtc_guidance_end(
+        guidance_mode=rtc_config.guidance_mode,
+        execution_horizon=execution_horizon,
+        available_overlap=available_overlap,
+        action_chunk_size=action_chunk_size,
+    )
+    resolved_schedule = resolve_rtc_schedule(rtc_config.prefix_attention_schedule, rtc_config.guidance_mode)
 
-    batch_size, action_chunk_size, action_dim = x_t.shape
     if prev_chunk_left_over.shape[1] < action_chunk_size or prev_chunk_left_over.shape[2] < action_dim:
         padded = torch.zeros(batch_size, action_chunk_size, action_dim, dtype=torch.float32, device=x_t.device)
         padded[:, : prev_chunk_left_over.shape[1], : prev_chunk_left_over.shape[2]] = prev_chunk_left_over
@@ -1585,9 +1830,9 @@ def apply_rtc_guidance(
     weights = (
         get_prefix_weights(
             inference_delay,
-            execution_horizon,
+            guidance_end,
             action_chunk_size,
-            schedule=rtc_config.prefix_attention_schedule,
+            schedule=resolved_schedule,
         )
         .to(x_t.device)
         .unsqueeze(0)

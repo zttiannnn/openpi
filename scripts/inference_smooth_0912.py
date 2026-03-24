@@ -39,7 +39,7 @@ from openpi.models_pytorch.rtc_utils import format_boundary_jump_stats
 from openpi.models_pytorch.rtc_utils import format_checkpoint_action_norm_stats
 from openpi.models_pytorch.rtc_utils import format_model_latency_summary
 from openpi.models_pytorch.rtc_utils import format_rtc_runtime_stats
-from openpi.models_pytorch.rtc_utils import get_b1_inference_delay_estimate
+from openpi.models_pytorch.rtc_utils import get_conservative_rtc_delay_estimate
 from openpi.models_pytorch.rtc_utils import get_rtc_boundary_risks
 from openpi.models_pytorch.rtc_utils import ModelLatencyCollector
 from openpi.models_pytorch.rtc_utils import should_dump_chunk_handoff
@@ -268,6 +268,7 @@ def inference_worker(
                 f"  RTC: mode={rtc_context.get('rtc_config').guidance_mode if rtc_context.get('rtc_config') is not None else 'unknown'}, "
                 f"inference_delay={rtc_context.get('inference_delay')}, "
                 f"prev_actions={'set' if rtc_context.get('prev_actions') is not None else 'None'}, "
+                f"processed_leftover={'set' if rtc_context.get('processed_leftover') is not None else 'None'}, "
                 f"executed_prefix_ref={'set' if rtc_context.get('executed_prefix_ref') is not None else 'None'}"
             )
         if model_latency_trace is not None:
@@ -596,11 +597,11 @@ def main():
     parser.add_argument("--qp_velocity_limit", type=float, default=0.0, help="可选的每步最大速度（动作单位/step），>0 则启用简单束缚后处理")
     # RTC (Real-Time Chunking) options
     parser.add_argument("--rtc_enable", action="store_true", help="启用 RTC 平滑（替代 chunk 间 transition 平滑）")
-    parser.add_argument("--rtc_execution_horizon", type=int, default=10, help="RTC 执行 horizon（权重衰减区间终点）")
-    parser.add_argument("--rtc_max_guidance_weight", type=float, default=None, help="RTC 最大 guidance 权重 (默认=num_steps)")
-    parser.add_argument("--rtc_sigma_d", type=float, default=1.0, help="RTC 先验方差缩放参数")
-    parser.add_argument("--rtc_schedule", type=str, default="linear", choices=["zeros", "ones", "linear", "exp"], help="RTC 权重衰减策略")
-    parser.add_argument("--rtc_guidance_mode", type=str, default="executed_prefix_b1", choices=["raw_prefix", "executed_prefix_b1"], help="RTC guidance 目标：旧 raw leftover 或执行空间前缀 B1")
+    parser.add_argument("--rtc_execution_horizon", type=int, default=10, help="legacy raw RTC 的权重衰减终点；paper raw RTC 会优先使用完整 overlap 区间")
+    parser.add_argument("--rtc_max_guidance_weight", type=float, default=10.0, help="RTC 最大 guidance 权重")
+    parser.add_argument("--rtc_sigma_d", type=float, default=0.2, help="RTC 先验方差缩放参数")
+    parser.add_argument("--rtc_schedule", type=str, default="auto", choices=["auto", "zeros", "ones", "linear", "exp"], help="RTC 权重衰减策略；auto 会按 guidance_mode 选择默认值")
+    parser.add_argument("--rtc_guidance_mode", type=str, default="executed_overlap_paper", choices=["raw_prefix", "raw_prefix_paper", "executed_overlap_paper", "executed_prefix_b1"], help="RTC guidance 目标：legacy raw leftover、论文式 raw overlap、论文式执行空间 overlap 或执行空间前缀 B1")
     parser.add_argument("--rtc_prefix_steps", type=int, default=5, help="B1 执行空间 guidance 的前缀步数")
     parser.add_argument("--rtc_anchor_weight", type=float, default=1.0, help="B1 第一帧锚定损失权重")
     parser.add_argument("--rtc_prefix_weight", type=float, default=1.0, help="B1 前缀跟随损失权重")
@@ -660,9 +661,9 @@ def main():
         if args.align_mode != "step":
             logging.warning("RTC enabled: forcing align_mode=step")
             args.align_mode = "step"
-        if rtc_config.guidance_mode == "raw_prefix" and args.horizon_smooth != "none":
+        if args.horizon_smooth != "none":
             logging.warning(
-                "raw RTC enabled: forcing horizon_smooth=none because raw-prefix guidance assumes the leftover tail matches model raw outputs."
+                "RTC enabled: forcing horizon_smooth=none because runtime horizon postprocessing would change the executed tail outside the model-side RTC objective."
             )
             args.horizon_smooth = "none"
         logging.info(f"RTC enabled: {rtc_config}")
@@ -742,8 +743,7 @@ def main():
     if rtc_enabled:
         action_queue = RTCActionQueue(enabled=True)
         rtc_delay_estimate = 0
-        rtc_delay_estimate_valid = False
-        rtc_b1_delay_estimate_valid = False
+        rtc_delay_history = collections.deque(maxlen=8)
         inflight_rtc_request = None
     else:
         action_queue = collections.deque()  # 存储当前动作序列
@@ -755,6 +755,7 @@ def main():
     last_policy_action = None
     last_raw_chunk_for_dump = None
     last_executed_chunk_for_dump = None
+    first_send_after_queue_update_pending = False
 
     # robot.send_action_np(np.array([-7980, 20113, -2285, -7921, 37285,  1023,     0.]))
     # time.sleep(1)
@@ -805,6 +806,11 @@ def main():
                 processed_leftover = action_queue.get_processed_left_over()
                 action_index_before_inference = action_queue.get_action_index()
                 leftover_len_at_send = 0 if prev_actions is None else len(prev_actions)
+                processed_leftover_len = 0 if processed_leftover is None else len(processed_leftover)
+                available_overlap = min(
+                    max(leftover_len_at_send, processed_leftover_len),
+                    int(config.model.action_horizon),
+                )
                 inflight_rtc_request = {
                     "action_index_before_inference": action_index_before_inference,
                     "leftover_len_at_send": leftover_len_at_send,
@@ -812,12 +818,12 @@ def main():
                 executed_prefix_reference = None
                 executed_prefix_prev = None
                 executed_prefix_ref = None
-                request_delay_estimate = rtc_delay_estimate
-                if rtc_config.guidance_mode == "executed_prefix_b1" and rtc_delay_estimate_valid:
-                    request_delay_estimate = get_b1_inference_delay_estimate(
-                        base_delay_estimate=rtc_delay_estimate,
-                        b1_delay_estimate_valid=rtc_b1_delay_estimate_valid,
-                    )
+                request_delay_estimate = get_conservative_rtc_delay_estimate(
+                    base_delay_estimate=rtc_delay_estimate,
+                    delay_history=rtc_delay_history,
+                    available_overlap=available_overlap,
+                )
+                if rtc_config.guidance_mode == "executed_prefix_b1":
                     executed_prefix_reference = build_executed_prefix_reference(
                         processed_leftover=processed_leftover,
                         current_state=state7,
@@ -832,19 +838,23 @@ def main():
                 rtc_ctx = {
                     "rtc_config": rtc_config,
                     "prev_actions": prev_actions,
+                    "processed_leftover": processed_leftover,
                     "inference_delay": request_delay_estimate,
                     "executed_prefix_prev": executed_prefix_prev,
                     "executed_prefix_ref": executed_prefix_ref,
                 }
                 logging.debug(
-                    "RTC request #%s: action_index_before_inference=%s, leftover_len_at_send=%s, delay_estimate=%s, prev_actions=%s, executed_prefix_ref=%s, b1_delay_estimate_valid=%s",
+                    "RTC request #%s: action_index_before_inference=%s, leftover_len_at_send=%s, processed_leftover_len=%s, available_overlap=%s, delay_estimate=%s, prev_actions=%s, processed_leftover=%s, executed_prefix_ref=%s, delay_history=%s",
                     sent_idx,
                     action_index_before_inference,
                     leftover_len_at_send,
+                    processed_leftover_len,
+                    available_overlap,
                     request_delay_estimate,
                     "set" if prev_actions is not None else "none",
+                    "set" if processed_leftover is not None else "none",
                     "set" if executed_prefix_ref is not None else "none",
-                    rtc_b1_delay_estimate_valid,
+                    list(rtc_delay_history),
                 )
             try:
                 if rtc_ctx is not None:
@@ -891,9 +901,8 @@ def main():
                     old_actions_arr = action_queue.get_processed_left_over()
                     real_delay = max(action_queue.get_action_index() - action_index_before_inference, 0)
                     rtc_delay_estimate = real_delay
-                    rtc_delay_estimate_valid = should_mark_rtc_delay_estimate_valid(leftover_len_at_send)
-                    if b1_diagnostics is not None:
-                        rtc_b1_delay_estimate_valid = True
+                    if should_mark_rtc_delay_estimate_valid(leftover_len_at_send):
+                        rtc_delay_history.append(real_delay)
                     new_actions = np.asarray(action_vals)
                     raw_action_vals = np.asarray(raw_action_vals)
                     if not (np.isfinite(new_actions).all() and np.isfinite(raw_action_vals).all()):
@@ -915,6 +924,8 @@ def main():
                         leftover_len_at_send=leftover_len_at_send,
                         rtc_execution_horizon=args.rtc_execution_horizon,
                         action_index_before_inference=action_index_before_inference,
+                        guidance_mode=rtc_config.guidance_mode,
+                        prefix_attention_schedule=rtc_config.prefix_attention_schedule,
                     )
 
                     print(format_rtc_runtime_stats(rtc_stats, chunk_idx=recv_idx), flush=True)
@@ -939,6 +950,7 @@ def main():
                         real_delay=real_delay,
                         action_index_before_inference=action_index_before_inference,
                     )
+                    first_send_after_queue_update_pending = not action_queue.empty()
                     rtc_queue_head = action_queue.get_processed_left_over()
                     rtc_boundary_stats = compute_boundary_jump_stats(
                         previous_action=last_policy_action,
@@ -1141,6 +1153,7 @@ def main():
                 )
                 for a in smooth_actions:
                     action_queue.append(a)
+                first_send_after_queue_update_pending = len(action_queue) > 0
 
                 waiting_for_infer = False
         except mp.queues.Empty:
@@ -1186,6 +1199,38 @@ def main():
                 if rtc_enabled and action_queue.empty() and not waiting_for_infer:
                     action_step_counter = max(action_step_counter, args.action_steps)
                 continue
+            first_send_after_queue_update = False
+            if execution_interp_enabled:
+                first_send_after_queue_update = first_send_after_queue_update_pending and policy_action_consumed
+            else:
+                first_send_after_queue_update = first_send_after_queue_update_pending
+            if first_send_after_queue_update:
+                first_send_stats = compute_boundary_jump_stats(
+                    previous_action=last_sent_action,
+                    next_action=action_to_send,
+                    joint_dims=6,
+                )
+                print(format_boundary_jump_stats(first_send_stats, label="first_send_after_queue_update"), flush=True)
+                actual_state = None
+                try:
+                    actual_joint_state = robot.get_joint_state()
+                    if actual_joint_state is not None:
+                        actual_state = np.asarray(actual_joint_state.get("state"), dtype=float)
+                except Exception:
+                    logging.exception("failed to read actual joint state before first send after queue update")
+                actual_state_stats = compute_boundary_jump_stats(
+                    previous_action=actual_state,
+                    next_action=action_to_send,
+                    joint_dims=6,
+                )
+                print(
+                    format_boundary_jump_stats(
+                        actual_state_stats,
+                        label="actual_state_to_first_sent_action",
+                    ),
+                    flush=True,
+                )
+                first_send_after_queue_update_pending = False
             if execution_interp_enabled and policy_action_consumed:
                 send_boundary_stats = compute_boundary_jump_stats(
                     previous_action=last_sent_action,

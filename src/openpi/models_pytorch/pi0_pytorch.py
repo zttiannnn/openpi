@@ -493,6 +493,7 @@ class PI0Pytorch(nn.Module):
         self, device, observation, noise=None, num_steps=10,
         rtc_config=None, prev_actions=None, inference_delay=0,
         executed_prefix_prev=None, executed_prefix_ref=None,
+        processed_leftover=None,
         profile_model: bool = False,
     ) -> Tensor:
         """Inference with RTC (Real-Time Chunking) guidance.
@@ -568,6 +569,7 @@ class PI0Pytorch(nn.Module):
                     num_flow_matching_steps=num_steps,
                     executed_prefix_prev=executed_prefix_prev,
                     executed_prefix_ref=executed_prefix_ref,
+                    processed_leftover=processed_leftover,
                     observation_state=state,
                     executed_prefix_transform_spec=self.rtc_executed_prefix_transform_spec,
                     profiler=profiler if profiler.enabled else None,

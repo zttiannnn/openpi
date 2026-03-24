@@ -41,6 +41,7 @@ from openpi.models_pytorch.rtc_utils import format_rtc_runtime_stats
 from openpi.models_pytorch.rtc_utils import get_b1_guided_window_start
 from openpi.models_pytorch.rtc_utils import get_rtc_boundary_risks
 from openpi.models_pytorch.rtc_utils import get_b1_inference_delay_estimate
+from openpi.models_pytorch.rtc_utils import get_conservative_rtc_delay_estimate
 from openpi.models_pytorch.rtc_utils import get_prefix_weights
 from openpi.models_pytorch.rtc_utils import interpolate_execution_action
 from openpi.models_pytorch.rtc_utils import is_complete_model_latency_trace
@@ -80,6 +81,18 @@ class TestRTCConfig:
         assert cfg2.enabled is True
         assert cfg2.execution_horizon == 5
         assert cfg2.sigma_d == 0.5
+
+    def test_accepts_paper_raw_guidance_mode(self):
+        cfg = RTCConfig(enabled=True, guidance_mode="raw_prefix_paper", prefix_attention_schedule="auto")
+
+        assert cfg.guidance_mode == "raw_prefix_paper"
+        assert cfg.prefix_attention_schedule == "auto"
+
+    def test_accepts_executed_overlap_paper_guidance_mode(self):
+        cfg = RTCConfig(enabled=True, guidance_mode="executed_overlap_paper", prefix_attention_schedule="auto")
+
+        assert cfg.guidance_mode == "executed_overlap_paper"
+        assert cfg.prefix_attention_schedule == "auto"
 
 
 class TestGetPrefixWeights:
@@ -237,6 +250,164 @@ class TestApplyRTCGuidance:
         )
 
         assert result.shape == (10, 6)
+
+    def test_raw_prefix_paper_supports_auto_schedule(self):
+        cfg = RTCConfig(
+            enabled=True,
+            guidance_mode="raw_prefix_paper",
+            prefix_attention_schedule="auto",
+            execution_horizon=8,
+            max_guidance_weight=10.0,
+        )
+        x_t = torch.ones(1, 20, 1)
+        prev_chunk = torch.full((1, 20, 1), 0.1)
+
+        def mock_denoiser(x):
+            return x * 0.5
+
+        result = apply_rtc_guidance(
+            x_t=x_t,
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=5,
+            time=torch.tensor(0.5),
+            original_denoise_step_partial=mock_denoiser,
+            rtc_config=cfg,
+            num_flow_matching_steps=10,
+        )
+
+        assert result.shape == x_t.shape
+
+    def test_raw_prefix_paper_guides_beyond_legacy_execution_horizon(self):
+        legacy_cfg = RTCConfig(
+            enabled=True,
+            guidance_mode="raw_prefix",
+            prefix_attention_schedule="exp",
+            execution_horizon=8,
+            max_guidance_weight=10.0,
+        )
+        paper_cfg = RTCConfig(
+            enabled=True,
+            guidance_mode="raw_prefix_paper",
+            prefix_attention_schedule="exp",
+            execution_horizon=8,
+            max_guidance_weight=10.0,
+        )
+        x_t = torch.ones(1, 20, 1)
+        prev_chunk = torch.full((1, 20, 1), 0.1)
+
+        def mock_denoiser(x):
+            return x * 0.5
+
+        baseline = mock_denoiser(x_t)
+        legacy_result = apply_rtc_guidance(
+            x_t=x_t,
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=5,
+            time=torch.tensor(0.5),
+            original_denoise_step_partial=mock_denoiser,
+            rtc_config=legacy_cfg,
+            num_flow_matching_steps=10,
+        )
+        paper_result = apply_rtc_guidance(
+            x_t=x_t,
+            prev_chunk_left_over=prev_chunk,
+            inference_delay=5,
+            time=torch.tensor(0.5),
+            original_denoise_step_partial=mock_denoiser,
+            rtc_config=paper_cfg,
+            num_flow_matching_steps=10,
+        )
+
+        torch.testing.assert_close(legacy_result[:, 8:], baseline[:, 8:], atol=1e-6, rtol=0.0)
+        assert torch.max(torch.abs(paper_result[:, 8:] - baseline[:, 8:])).item() > 1e-4
+
+    def test_executed_overlap_paper_reduces_executed_seam_that_raw_guidance_misses(self):
+        raw_cfg = RTCConfig(
+            enabled=True,
+            guidance_mode="raw_prefix_paper",
+            prefix_attention_schedule="auto",
+            execution_horizon=4,
+            max_guidance_weight=10.0,
+        )
+        executed_cfg = RTCConfig(
+            enabled=True,
+            guidance_mode="executed_overlap_paper",
+            prefix_attention_schedule="auto",
+            execution_horizon=4,
+            max_guidance_weight=10.0,
+            guidance_start_fraction=0.0,
+            stay_weight=0.0,
+            arm_joint_dims=6,
+        )
+        x_t = torch.zeros(1, 4, 6, dtype=torch.float32)
+        observation_state = torch.full((1, 6), 10.0, dtype=torch.float32)
+        processed_leftover = np.zeros((4, 6), dtype=np.float32)
+        transform_spec = RTCExecutedPrefixTransformSpec(
+            action_mean=np.zeros(6, dtype=np.float32),
+            action_std=np.ones(6, dtype=np.float32),
+            use_quantiles=False,
+            delta_action_mask=(True, True, True, True, True, True),
+            output_joint_flip_mask=None,
+            arm_joint_dims=6,
+        )
+
+        def mock_denoiser(x):
+            return torch.zeros_like(x)
+
+        baseline_x1 = x_t.clone()
+        raw_result = apply_rtc_guidance(
+            x_t=x_t,
+            prev_chunk_left_over=np.zeros((4, 6), dtype=np.float32),
+            inference_delay=1,
+            time=torch.tensor(0.5),
+            original_denoise_step_partial=mock_denoiser,
+            rtc_config=raw_cfg,
+            num_flow_matching_steps=10,
+            observation_state=observation_state,
+            processed_leftover=processed_leftover,
+            executed_prefix_transform_spec=transform_spec,
+        )
+        executed_result = apply_rtc_guidance(
+            x_t=x_t,
+            prev_chunk_left_over=np.zeros((4, 6), dtype=np.float32),
+            inference_delay=1,
+            time=torch.tensor(0.5),
+            original_denoise_step_partial=mock_denoiser,
+            rtc_config=executed_cfg,
+            num_flow_matching_steps=10,
+            observation_state=observation_state,
+            processed_leftover=processed_leftover,
+            executed_prefix_transform_spec=transform_spec,
+        )
+
+        baseline_decoded = decode_actions_to_executed_prefix_torch(
+            baseline_x1,
+            observation_state=observation_state,
+            transform_spec=transform_spec,
+        )
+        raw_decoded = decode_actions_to_executed_prefix_torch(
+            x_t - 0.5 * raw_result,
+            observation_state=observation_state,
+            transform_spec=transform_spec,
+        )
+        executed_decoded = decode_actions_to_executed_prefix_torch(
+            x_t - 0.5 * executed_result,
+            observation_state=observation_state,
+            transform_spec=transform_spec,
+        )
+
+        baseline_error = torch.linalg.vector_norm(
+            baseline_decoded - torch.as_tensor(processed_leftover, dtype=torch.float32).unsqueeze(0)
+        ).item()
+        raw_error = torch.linalg.vector_norm(
+            raw_decoded - torch.as_tensor(processed_leftover, dtype=torch.float32).unsqueeze(0)
+        ).item()
+        executed_error = torch.linalg.vector_norm(
+            executed_decoded - torch.as_tensor(processed_leftover, dtype=torch.float32).unsqueeze(0)
+        ).item()
+
+        assert math.isclose(raw_error, baseline_error, rel_tol=0.0, abs_tol=1e-5)
+        assert executed_error < baseline_error
 
     def test_b1_falls_back_when_reference_is_missing(self):
         cfg = RTCConfig(enabled=True, guidance_mode="executed_prefix_b1")
@@ -652,6 +823,45 @@ class TestRTCRuntimeStats:
         assert stats.overlap_l2_before == 0.0
         assert math.isclose(stats.overlap_l2_after, math.sqrt(10.0**2 + 30.0**2), rel_tol=0.0, abs_tol=1e-6)
 
+    def test_reports_full_overlap_guidance_for_raw_prefix_paper(self):
+        stats = compute_rtc_runtime_stats(
+            prev_raw_left_over=np.arange(60, dtype=np.float32).reshape(30, 2),
+            prev_processed_left_over=np.arange(60, dtype=np.float32).reshape(30, 2),
+            new_raw_actions=np.arange(100, dtype=np.float32).reshape(50, 2),
+            new_processed_actions=np.arange(100, dtype=np.float32).reshape(50, 2),
+            real_delay=5,
+            leftover_len_at_send=30,
+            rtc_execution_horizon=10,
+            action_index_before_inference=15,
+            guidance_mode="raw_prefix_paper",
+            prefix_attention_schedule="auto",
+        )
+
+        assert stats.raw_guidance_end == 30
+        assert stats.resolved_schedule == "exp"
+        assert stats.legacy_effective_guided_steps == 5
+        assert stats.effective_guided_steps == 25
+
+    def test_reports_full_overlap_guidance_for_executed_overlap_paper(self):
+        stats = compute_rtc_runtime_stats(
+            prev_raw_left_over=np.arange(20, dtype=np.float32).reshape(10, 2),
+            prev_processed_left_over=np.arange(60, dtype=np.float32).reshape(30, 2),
+            new_raw_actions=np.arange(20, dtype=np.float32).reshape(10, 2),
+            new_processed_actions=np.arange(100, dtype=np.float32).reshape(50, 2),
+            real_delay=5,
+            leftover_len_at_send=30,
+            rtc_execution_horizon=10,
+            action_index_before_inference=15,
+            guidance_mode="executed_overlap_paper",
+            prefix_attention_schedule="auto",
+        )
+
+        assert stats.guidance_end == 30
+        assert stats.raw_guidance_end is None
+        assert stats.resolved_schedule == "exp"
+        assert stats.legacy_effective_guided_steps == 5
+        assert stats.effective_guided_steps == 25
+
     def test_formats_runtime_stats_for_terminal_output(self):
         stats = compute_rtc_runtime_stats(
             prev_raw_left_over=np.array([[1.0], [2.0]], dtype=np.float32),
@@ -674,6 +884,48 @@ class TestRTCRuntimeStats:
         assert "overlap=2" in message
         assert "overlap_l2_before=0.000000" in message
         assert "overlap_l2_after=3.000000" in message
+
+    def test_formats_paper_runtime_stats_with_actual_guidance_span(self):
+        stats = compute_rtc_runtime_stats(
+            prev_raw_left_over=np.arange(60, dtype=np.float32).reshape(30, 2),
+            prev_processed_left_over=np.arange(60, dtype=np.float32).reshape(30, 2),
+            new_raw_actions=np.arange(100, dtype=np.float32).reshape(50, 2),
+            new_processed_actions=np.arange(100, dtype=np.float32).reshape(50, 2),
+            real_delay=5,
+            leftover_len_at_send=30,
+            rtc_execution_horizon=10,
+            action_index_before_inference=15,
+            guidance_mode="raw_prefix_paper",
+            prefix_attention_schedule="auto",
+        )
+
+        message = format_rtc_runtime_stats(stats, chunk_idx=4)
+
+        assert "effective_guided_steps=25" in message
+        assert "raw_guidance_end=30" in message
+        assert "resolved_schedule=exp" in message
+        assert "legacy_effective_guided_steps=5" in message
+
+    def test_formats_executed_overlap_runtime_stats_with_guidance_end(self):
+        stats = compute_rtc_runtime_stats(
+            prev_raw_left_over=np.arange(20, dtype=np.float32).reshape(10, 2),
+            prev_processed_left_over=np.arange(60, dtype=np.float32).reshape(30, 2),
+            new_raw_actions=np.arange(20, dtype=np.float32).reshape(10, 2),
+            new_processed_actions=np.arange(100, dtype=np.float32).reshape(50, 2),
+            real_delay=5,
+            leftover_len_at_send=30,
+            rtc_execution_horizon=10,
+            action_index_before_inference=15,
+            guidance_mode="executed_overlap_paper",
+            prefix_attention_schedule="auto",
+        )
+
+        message = format_rtc_runtime_stats(stats, chunk_idx=4)
+
+        assert "effective_guided_steps=25" in message
+        assert "guidance_end=30" in message
+        assert "resolved_schedule=exp" in message
+        assert "legacy_effective_guided_steps=5" in message
 
     def test_reports_boundary_risks_from_runtime_stats(self):
         stats = compute_rtc_runtime_stats(
@@ -722,6 +974,35 @@ class TestB1BoundaryWindow:
         assert reference.window_start == 3
         np.testing.assert_allclose(reference.executed_prefix_prev, processed_leftover[2], atol=1e-6, rtol=0.0)
         np.testing.assert_allclose(reference.executed_prefix_ref, processed_leftover[3:6], atol=1e-6, rtol=0.0)
+
+
+class TestConservativeRTCDelayEstimate:
+    def test_uses_p75_history_and_last_delay(self):
+        estimate = get_conservative_rtc_delay_estimate(
+            base_delay_estimate=3,
+            delay_history=[1, 2, 4, 5],
+            available_overlap=10,
+        )
+
+        assert estimate == 5
+
+    def test_applies_warmup_multiplier_when_history_is_short(self):
+        estimate = get_conservative_rtc_delay_estimate(
+            base_delay_estimate=3,
+            delay_history=[2, 4],
+            available_overlap=10,
+        )
+
+        assert estimate == 8
+
+    def test_clamps_to_available_overlap(self):
+        estimate = get_conservative_rtc_delay_estimate(
+            base_delay_estimate=6,
+            delay_history=[5, 6, 7, 8],
+            available_overlap=4,
+        )
+
+        assert estimate == 4
 
     def test_reports_when_real_boundary_hits_guided_window(self):
         diagnostics = B1GuidanceDiagnostics(
