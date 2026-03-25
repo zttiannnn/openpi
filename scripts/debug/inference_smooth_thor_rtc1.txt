@@ -1,0 +1,49 @@
+Checkpoint action norm stats: mean=[47.202168, 1448.041382, -955.351685, 108.137665, -222.306992, -93.740135] std=[9731.508789, 17616.267578, 14329.407227, 7096.434082, 11659.133789, 18246.578125] q01=[-39813.531250, -54908.152344, -43613.023438, -24899.050781, -37470.988281, -53693.304688] q99=[28866.771484, 54138.460938, 48203.757812, 20217.968750, 31267.175781, 76220.695312]
+Loaded norm stats from /workspace/robot_repo/openpi_torch/openpi/checkpoints/pi05_agileX_thor/0311grad_acc_4_lr_2e-4_1e-6/11106/openpi_stats
+Step 0: infer time = 0.7299 seconds
+  RTC: mode=executed_prefix_b1, inference_delay=0, prev_actions=None, executed_prefix_ref=None
+  raw_actions (normalized) range: [-1.3679, 1.3951], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.058202 step_delta_l2_max=0.096683 step_delta_abs_max=0.091441 step_acc_l2_mean=0.020906 step_acc_l2_max=0.048899 step_acc_abs_max=0.033271
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.091441, 0.049112, 0.053242, 0.016549, 0.059060, 0.039318] step_acc_abs_max=[0.033271, 0.032064, 0.021429, 0.016177, 0.030826, 0.016263]
+  raw_actions_preview: shape=(50, 7) head=[[0.163, -0.003, -0.045, 0.099, 0.102, -0.169, -0.997], [0.155, -0.004, -0.036, 0.101, 0.105, -0.172, -0.993], [0.150, -0.013, -0.019, 0.101, 0.118, -0.173, -0.995]] tail=[[-0.406, -1.340, 1.160, 0.088, 1.387, -0.247, -0.974], [-0.477, -1.354, 1.164, 0.091, 1.395, -0.286, -0.967], [-0.536, -1.368, 1.176, 0.084, 1.395, -0.317, -0.963]]
+  policy_actions (denormalized, pre_postprocess) range: [-53181.7466, 72019.4066], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=799.959106 state_to_first_abs_max=522.442871 step_delta_l2_mean=2536.920898 step_delta_l2_max=3854.406494 step_delta_abs_max=3140.097656 step_acc_l2_mean=914.361816 step_acc_l2_max=2391.376221 step_acc_abs_max=1748.226562
+  policy_chunk_joint: joint_dims=6 state_to_first=[139.903564, 522.442871, -241.231689, -110.755371, 419.443359, 317.840820] step_delta_abs_max=[3140.097656, 2677.750000, 2444.238281, 373.325928, 2029.835938, 2553.961914] step_acc_abs_max=[1142.524414, 1748.226562, 983.800781, 364.930420, 1059.476562, 1056.379883]
+  policy_actions_preview: shape=(50, 7) head=[[2433.904, -2424.557, 2869.768, 4234.245, 20154.443, -5931.159, -30.484], [2132.479, -2356.089, 2448.255, 4282.384, 20248.387, -6178.629, 104.495], [1964.254, -1872.575, 1671.188, 4283.449, 20682.295, -6197.670, 25.345]] tail=[[-17124.777, 70477.773, -52422.234, 3988.453, 64287.336, -11014.752, 762.145], [-19564.725, 71262.469, -52638.965, 4064.702, 64583.051, -13568.714, 1003.880], [-21588.869, 72019.406, -53181.746, 3888.230, 64581.445, -15587.478, 1129.807]]
+  worker_actions (postprocess) range: [-52758.5925, 71094.2145], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=799.959106 state_to_first_abs_max=522.442871 step_delta_l2_mean=2433.447510 step_delta_l2_max=3449.498779 step_delta_abs_max=2471.153320 step_acc_l2_mean=408.451447 step_acc_l2_max=1007.483643 step_acc_abs_max=744.611328
+  worker_chunk_joint: joint_dims=6 state_to_first=[139.903564, 522.442871, -241.231689, -110.755371, 419.443359, 317.840820] step_delta_abs_max=[2471.153320, 2169.515625, 2310.353516, 262.361816, 1732.207031, 1914.056641] step_acc_abs_max=[669.157715, 689.664062, 421.281250, 192.091797, 410.730469, 744.611328]
+  worker_actions_preview: shape=(50, 7) head=[[2433.904, -2424.557, 2869.768, 4234.245, 20154.443, -5931.159, -30.484], [2283.191, -2390.323, 2659.012, 4258.314, 20201.416, -6054.894, 104.495], [2123.722, -2131.449, 2165.100, 4270.881, 20441.855, -6126.282, 25.345]] tail=[[-14653.623, 69075.578, -52031.914, 3985.142, 64084.656, -9950.015, 762.145], [-17109.174, 70169.023, -52335.438, 4024.922, 64333.852, -11759.364, 1003.880], [-19349.021, 71094.211, -52758.594, 3956.576, 64457.648, -13673.421, 1129.807]]
+  RTC result #0: action_index_before_inference=0 leftover_len_at_send=0 real_delay=0 rtc_execution_horizon=10 effective_guided_steps=0 overlap=0 overlap_l2_before=n/a overlap_l2_after=n/a
+  RTC boundary risk: no effective guided steps remain at the executed boundary
+/usr/local/lib/python3.12/dist-packages/numpy/linalg/linalg.py:2582: RuntimeWarning: overflow encountered in multiply
+  s = (x.conj() * x).real
+Step 1: infer time = 0.6861 seconds
+  RTC: mode=executed_prefix_b1, inference_delay=0, prev_actions=set, executed_prefix_ref=set
+  raw_actions (normalized) range: [nan, nan], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=nan step_delta_l2_max=nan step_delta_abs_max=nan step_acc_l2_mean=nan step_acc_l2_max=nan step_acc_abs_max=nan
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[nan, nan, nan, nan, nan, nan] step_acc_abs_max=[nan, nan, nan, nan, nan, nan]
+  raw_actions_preview: shape=(50, 7) head=[[nan, nan, nan, nan, nan, nan, nan], [nan, nan, nan, nan, nan, nan, nan], [nan, nan, nan, nan, nan, nan, nan]] tail=[[nan, nan, nan, nan, nan, nan, nan], [nan, nan, nan, nan, nan, nan, nan], [nan, nan, nan, nan, nan, nan, nan]]
+  policy_actions (denormalized, pre_postprocess) range: [nan, nan], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=nan state_to_first_abs_max=nan step_delta_l2_mean=nan step_delta_l2_max=nan step_delta_abs_max=nan step_acc_l2_mean=nan step_acc_l2_max=nan step_acc_abs_max=nan
+  policy_chunk_joint: joint_dims=6 state_to_first=[nan, nan, nan, nan, nan, nan] step_delta_abs_max=[nan, nan, nan, nan, nan, nan] step_acc_abs_max=[nan, nan, nan, nan, nan, nan]
+  policy_actions_preview: shape=(50, 7) head=[[nan, nan, nan, nan, nan, nan, nan], [nan, nan, nan, nan, nan, nan, nan], [nan, nan, nan, nan, nan, nan, nan]] tail=[[nan, nan, nan, nan, nan, nan, nan], [nan, nan, nan, nan, nan, nan, nan], [nan, nan, nan, nan, nan, nan, nan]]
+  worker_actions (postprocess) range: [nan, nan], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=nan state_to_first_abs_max=nan step_delta_l2_mean=nan step_delta_l2_max=nan step_delta_abs_max=nan step_acc_l2_mean=nan step_acc_l2_max=nan step_acc_abs_max=nan
+  worker_chunk_joint: joint_dims=6 state_to_first=[nan, nan, nan, nan, nan, nan] step_delta_abs_max=[nan, nan, nan, nan, nan, nan] step_acc_abs_max=[nan, nan, nan, nan, nan, nan]
+  worker_actions_preview: shape=(50, 7) head=[[nan, nan, nan, nan, nan, nan, nan], [nan, nan, nan, nan, nan, nan, nan], [nan, nan, nan, nan, nan, nan, nan]] tail=[[nan, nan, nan, nan, nan, nan, nan], [nan, nan, nan, nan, nan, nan, nan], [nan, nan, nan, nan, nan, nan, nan]]
+  RTC B1: guided_window_start=0 prefix_steps=5 delay_estimate=0 boundary_l2_before=inf boundary_l2_after=nan boundary_abs_max_before=218487331986200292860362752.000000 boundary_abs_max_after=nan prefix_acc_abs_max_before=490720913038119998213586944.000000 prefix_acc_abs_max_after=nan
+  RTC result #1: action_index_before_inference=20 leftover_len_at_send=30 real_delay=15 rtc_execution_horizon=10 effective_guided_steps=0 overlap=15 overlap_l2_before=nan overlap_l2_after=nan
+  RTC boundary risk: delay exceeded rtc_execution_horizon; no effective guided steps remain at the executed boundary
+  RTC B1: guided_window_start=0 prefix_steps=5 delay_estimate=0 real_delay=15 boundary_l2_before=inf boundary_l2_after=nan boundary_abs_max_before=218487331986200292860362752.000000 boundary_abs_max_after=nan prefix_acc_abs_max_before=490720913038119998213586944.000000 prefix_acc_abs_max_after=nan
+Traceback (most recent call last):
+  File "/workspace/robot_repo/openpi_torch/openpi/scripts/inference_smooth_0912.py", line 880, in <module>
+    main()
+  File "/workspace/robot_repo/openpi_torch/openpi/scripts/inference_smooth_0912.py", line 864, in main
+    robot.send_action_np(action_to_send[:7])
+  File "/workspace/robot_repo/openpi_torch/openpi/third_party/agilex/agilexfollower.py", line 248, in send_action_np
+    self.piper.JointCtrl(int(action[0]), int(action[1]), int(action[2]),
+                         ^^^^^^^^^^^^^^
+ValueError: cannot convert float NaN to integer
+terminate called without an active exception
+scripts/inference_smoot_thor_rtc1.sh: line 20: 2674025 Aborted                 (core dumped) python scripts/inference_smooth_0912.py --port can_left --id left --config pi05_agileX_thor --checkpoint_dir ./checkpoints/pi05_agileX_thor/0311grad_acc_4_lr_2e-4_1e-6/11106 --task "Put the purple carton of milk into the cardboard box." --cameras '{camera0: {type: orbbec, index_or_path: CP0H953000YB, width: 640, height: 480, fps: 30}, camera1: {type: orbbec, index_or_path: CP02653000TL, width: 640, height: 480, fps: 30}}' --action_steps 20 --fps 20 --smooth_type none --horizon_smooth ema --horizon_ema_alpha 0.5 --rtc_enable --rtc_guidance_mode executed_prefix_b1 --print_action_arrays --print_action_array_rows 3 --qp_lambda_acc 0

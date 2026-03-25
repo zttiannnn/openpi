@@ -1,0 +1,322 @@
+Training:  23%|██▎       | 6780/30000 [5:39:07<18:51:08,  2.92s/it, loss=0.0019, lr=1.93e-04, step=6779][rank5]:[E320 01:41:47.061336915 ProcessGroupNCCL.cpp:632] [Rank 5] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600001 milliseconds before timing out.
+[rank6]:[E320 01:41:47.068405309 ProcessGroupNCCL.cpp:632] [Rank 6] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600004 milliseconds before timing out.
+[rank7]:[E320 01:41:47.074709752 ProcessGroupNCCL.cpp:632] [Rank 7] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600012 milliseconds before timing out.
+[rank5]:[E320 01:51:16.648747487 ProcessGroupNCCL.cpp:1746] [PG ID 0 PG GUID 0(default_pg) Rank 5] ProcessGroupNCCL's watchdog got stuck for 480 seconds without making progress in monitoring enqueued collectives. This typically indicates a NCCL/CUDA API (e.g., CudaEventDestroy) hang blocking the watchdog, and could be triggered by another thread holding the GIL inside a CUDA api (for example, CudaEventDestroy), or other deadlock-prone behaviors.If you suspect the watchdog is not actually stuck and a longer timeout would help, you can either increase the timeout (TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC) to a larger value or disable the heartbeat monitor (TORCH_NCCL_ENABLE_MONITORING=0).If either of aforementioned helps, feel free to file an issue to PyTorch about the short timeout or false positive abort; otherwise, please attempt to debug the hang. 
+[rank6]:[E320 01:51:17.642873975 ProcessGroupNCCL.cpp:1746] [PG ID 0 PG GUID 0(default_pg) Rank 6] ProcessGroupNCCL's watchdog got stuck for 480 seconds without making progress in monitoring enqueued collectives. This typically indicates a NCCL/CUDA API (e.g., CudaEventDestroy) hang blocking the watchdog, and could be triggered by another thread holding the GIL inside a CUDA api (for example, CudaEventDestroy), or other deadlock-prone behaviors.If you suspect the watchdog is not actually stuck and a longer timeout would help, you can either increase the timeout (TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC) to a larger value or disable the heartbeat monitor (TORCH_NCCL_ENABLE_MONITORING=0).If either of aforementioned helps, feel free to file an issue to PyTorch about the short timeout or false positive abort; otherwise, please attempt to debug the hang. 
+[rank7]:[E320 01:51:17.643262175 ProcessGroupNCCL.cpp:1746] [PG ID 0 PG GUID 0(default_pg) Rank 7] ProcessGroupNCCL's watchdog got stuck for 480 seconds without making progress in monitoring enqueued collectives. This typically indicates a NCCL/CUDA API (e.g., CudaEventDestroy) hang blocking the watchdog, and could be triggered by another thread holding the GIL inside a CUDA api (for example, CudaEventDestroy), or other deadlock-prone behaviors.If you suspect the watchdog is not actually stuck and a longer timeout would help, you can either increase the timeout (TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC) to a larger value or disable the heartbeat monitor (TORCH_NCCL_ENABLE_MONITORING=0).If either of aforementioned helps, feel free to file an issue to PyTorch about the short timeout or false positive abort; otherwise, please attempt to debug the hang. 
+[rank2]:[E320 01:41:47.089951615 ProcessGroupNCCL.cpp:632] [Rank 2] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600019 milliseconds before timing out.
+[rank3]:[E320 01:41:47.116804888 ProcessGroupNCCL.cpp:632] [Rank 3] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600055 milliseconds before timing out.
+[rank2]:[E320 01:51:17.644239868 ProcessGroupNCCL.cpp:1746] [PG ID 0 PG GUID 0(default_pg) Rank 2] ProcessGroupNCCL's watchdog got stuck for 480 seconds without making progress in monitoring enqueued collectives. This typically indicates a NCCL/CUDA API (e.g., CudaEventDestroy) hang blocking the watchdog, and could be triggered by another thread holding the GIL inside a CUDA api (for example, CudaEventDestroy), or other deadlock-prone behaviors.If you suspect the watchdog is not actually stuck and a longer timeout would help, you can either increase the timeout (TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC) to a larger value or disable the heartbeat monitor (TORCH_NCCL_ENABLE_MONITORING=0).If either of aforementioned helps, feel free to file an issue to PyTorch about the short timeout or false positive abort; otherwise, please attempt to debug the hang. 
+[rank4]:[E320 01:41:47.139860255 ProcessGroupNCCL.cpp:632] [Rank 4] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600073 milliseconds before timing out.
+[rank1]:[E320 01:41:47.159883196 ProcessGroupNCCL.cpp:632] [Rank 1] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600094 milliseconds before timing out.
+[rank3]:[E320 01:51:17.643164392 ProcessGroupNCCL.cpp:1746] [PG ID 0 PG GUID 0(default_pg) Rank 3] ProcessGroupNCCL's watchdog got stuck for 480 seconds without making progress in monitoring enqueued collectives. This typically indicates a NCCL/CUDA API (e.g., CudaEventDestroy) hang blocking the watchdog, and could be triggered by another thread holding the GIL inside a CUDA api (for example, CudaEventDestroy), or other deadlock-prone behaviors.If you suspect the watchdog is not actually stuck and a longer timeout would help, you can either increase the timeout (TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC) to a larger value or disable the heartbeat monitor (TORCH_NCCL_ENABLE_MONITORING=0).If either of aforementioned helps, feel free to file an issue to PyTorch about the short timeout or false positive abort; otherwise, please attempt to debug the hang. 
+[rank4]:[E320 01:51:17.643203409 ProcessGroupNCCL.cpp:1746] [PG ID 0 PG GUID 0(default_pg) Rank 4] ProcessGroupNCCL's watchdog got stuck for 480 seconds without making progress in monitoring enqueued collectives. This typically indicates a NCCL/CUDA API (e.g., CudaEventDestroy) hang blocking the watchdog, and could be triggered by another thread holding the GIL inside a CUDA api (for example, CudaEventDestroy), or other deadlock-prone behaviors.If you suspect the watchdog is not actually stuck and a longer timeout would help, you can either increase the timeout (TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC) to a larger value or disable the heartbeat monitor (TORCH_NCCL_ENABLE_MONITORING=0).If either of aforementioned helps, feel free to file an issue to PyTorch about the short timeout or false positive abort; otherwise, please attempt to debug the hang. 
+[rank1]:[E320 01:51:17.643645755 ProcessGroupNCCL.cpp:1746] [PG ID 0 PG GUID 0(default_pg) Rank 1] ProcessGroupNCCL's watchdog got stuck for 480 seconds without making progress in monitoring enqueued collectives. This typically indicates a NCCL/CUDA API (e.g., CudaEventDestroy) hang blocking the watchdog, and could be triggered by another thread holding the GIL inside a CUDA api (for example, CudaEventDestroy), or other deadlock-prone behaviors.If you suspect the watchdog is not actually stuck and a longer timeout would help, you can either increase the timeout (TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC) to a larger value or disable the heartbeat monitor (TORCH_NCCL_ENABLE_MONITORING=0).If either of aforementioned helps, feel free to file an issue to PyTorch about the short timeout or false positive abort; otherwise, please attempt to debug the hang. 
+[rank5]:[E320 08:30:18.206143112 ProcessGroupNCCL.cpp:1536] [PG ID 0 PG GUID 0(default_pg) Rank 5] ProcessGroupNCCL preparing to dump debug info. Include stack trace: 1
+[rank6]:[E320 08:30:18.206151186 ProcessGroupNCCL.cpp:1536] [PG ID 0 PG GUID 0(default_pg) Rank 6] ProcessGroupNCCL preparing to dump debug info. Include stack trace: 1
+[rank5]:[E320 08:30:18.206177468 ProcessGroupNCCL.cpp:2271] [PG ID 0 PG GUID 0(default_pg) Rank 5]  failure detected by watchdog at work sequence id: 799842 PG status: last enqueued work: 799843, last completed work: 799841
+[rank6]:[E320 08:30:18.206178650 ProcessGroupNCCL.cpp:2271] [PG ID 0 PG GUID 0(default_pg) Rank 6]  failure detected by watchdog at work sequence id: 799842 PG status: last enqueued work: 799843, last completed work: 799841
+[rank5]:[E320 08:30:18.206197257 ProcessGroupNCCL.cpp:670] Stack trace of the failed collective not found, potentially because FlightRecorder is disabled. You can enable it by setting TORCH_NCCL_TRACE_BUFFER_SIZE to a non-zero value.
+[rank6]:[E320 08:30:18.206200972 ProcessGroupNCCL.cpp:670] Stack trace of the failed collective not found, potentially because FlightRecorder is disabled. You can enable it by setting TORCH_NCCL_TRACE_BUFFER_SIZE to a non-zero value.
+[rank2]:[E320 08:30:18.206286342 ProcessGroupNCCL.cpp:1536] [PG ID 0 PG GUID 0(default_pg) Rank 2] ProcessGroupNCCL preparing to dump debug info. Include stack trace: 1
+[rank2]:[E320 08:30:18.206301062 ProcessGroupNCCL.cpp:2271] [PG ID 0 PG GUID 0(default_pg) Rank 2]  failure detected by watchdog at work sequence id: 799842 PG status: last enqueued work: 799843, last completed work: 799841
+[rank2]:[E320 08:30:18.206320248 ProcessGroupNCCL.cpp:670] Stack trace of the failed collective not found, potentially because FlightRecorder is disabled. You can enable it by setting TORCH_NCCL_TRACE_BUFFER_SIZE to a non-zero value.
+[rank4]:[E320 08:30:18.206365398 ProcessGroupNCCL.cpp:2271] [PG ID 0 PG GUID 0(default_pg) Rank 4]  failure detected by watchdog at work sequence id: 799842 PG status: last enqueued work: 799843, last completed work: 799841
+[rank4]:[E320 08:30:18.206373638 ProcessGroupNCCL.cpp:1536] [PG ID 0 PG GUID 0(default_pg) Rank 4] ProcessGroupNCCL preparing to dump debug info. Include stack trace: 1
+[rank4]:[E320 08:30:18.206387382 ProcessGroupNCCL.cpp:670] Stack trace of the failed collective not found, potentially because FlightRecorder is disabled. You can enable it by setting TORCH_NCCL_TRACE_BUFFER_SIZE to a non-zero value.
+[rank1]:[E320 08:30:18.206401329 ProcessGroupNCCL.cpp:2271] [PG ID 0 PG GUID 0(default_pg) Rank 1]  failure detected by watchdog at work sequence id: 799842 PG status: last enqueued work: 799843, last completed work: 799841
+[rank3]:[E320 08:30:18.206404755 ProcessGroupNCCL.cpp:1536] [PG ID 0 PG GUID 0(default_pg) Rank 3] ProcessGroupNCCL preparing to dump debug info. Include stack trace: 1
+[rank1]:[E320 08:30:18.206409189 ProcessGroupNCCL.cpp:1536] [PG ID 0 PG GUID 0(default_pg) Rank 1] ProcessGroupNCCL preparing to dump debug info. Include stack trace: 1
+[rank1]:[E320 08:30:18.206426124 ProcessGroupNCCL.cpp:670] Stack trace of the failed collective not found, potentially because FlightRecorder is disabled. You can enable it by setting TORCH_NCCL_TRACE_BUFFER_SIZE to a non-zero value.
+[rank3]:[E320 08:30:18.206410291 ProcessGroupNCCL.cpp:2271] [PG ID 0 PG GUID 0(default_pg) Rank 3]  failure detected by watchdog at work sequence id: 799842 PG status: last enqueued work: 799843, last completed work: 799841
+[rank3]:[E320 08:30:18.206434153 ProcessGroupNCCL.cpp:670] Stack trace of the failed collective not found, potentially because FlightRecorder is disabled. You can enable it by setting TORCH_NCCL_TRACE_BUFFER_SIZE to a non-zero value.
+[rank7]:[E320 08:30:18.206469290 ProcessGroupNCCL.cpp:1536] [PG ID 0 PG GUID 0(default_pg) Rank 7] ProcessGroupNCCL preparing to dump debug info. Include stack trace: 1
+[rank7]:[E320 08:30:18.206475459 ProcessGroupNCCL.cpp:2271] [PG ID 0 PG GUID 0(default_pg) Rank 7]  failure detected by watchdog at work sequence id: 799842 PG status: last enqueued work: 799843, last completed work: 799841
+[rank7]:[E320 08:30:18.206502086 ProcessGroupNCCL.cpp:670] Stack trace of the failed collective not found, potentially because FlightRecorder is disabled. You can enable it by setting TORCH_NCCL_TRACE_BUFFER_SIZE to a non-zero value.
+Training:  23%|██▎       | 6780/30000 [12:37:39<18:51:08,  2.92s/it, loss=0.0015, lr=1.93e-04, step=6780][rank0]:[E320 08:30:18.269865089 ProcessGroupNCCL.cpp:1685] [PG ID 0 PG GUID 0(default_pg) Rank 0] Observed flight recorder dump signal from another rank via TCPStore.
+[rank0]:[E320 08:30:18.270064110 ProcessGroupNCCL.cpp:1746] [PG ID 0 PG GUID 0(default_pg) Rank 0] Received a dump signal due to a collective timeout from  rank 7 and we will try our best to dump the debug info. Last enqueued NCCL work: 799841, last completed NCCL work: 799841.This is most likely caused by incorrect usages of collectives, e.g., wrong sizes used across ranks, the order of collectives is not same for all ranks or the scheduled collective, for some reason, didn't run. Additionally, this can be caused by GIL deadlock or other reasons such as network errors or bugs in the communications library (e.g. NCCL), etc. 
+[rank0]:[E320 08:30:18.270427755 ProcessGroupNCCL.cpp:1536] [PG ID 0 PG GUID 0(default_pg) Rank 0] ProcessGroupNCCL preparing to dump debug info. Include stack trace: 1
+[rank6]:[E320 08:30:18.334660462 ProcessGroupNCCL.cpp:684] [Rank 6] Some NCCL operations have failed or timed out. Due to the asynchronous nature of CUDA kernels, subsequent GPU operations might run on corrupted/incomplete data.
+[rank6]:[E320 08:30:18.334669956 ProcessGroupNCCL.cpp:698] [Rank 6] To avoid data inconsistency, we are taking the entire process down.
+[rank6]:[E320 08:30:18.336079731 ProcessGroupNCCL.cpp:1899] [PG ID 0 PG GUID 0(default_pg) Rank 6] Process group watchdog thread terminated with exception: [Rank 6] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600004 milliseconds before timing out.
+Exception raised from checkTimeout at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:635 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7f6dddd785e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: c10d::ProcessGroupNCCL::WorkNCCL::checkTimeout(std::optional<std::chrono::duration<long, std::ratio<1l, 1000l> > >) + 0x23d (0x7f6d8cbd3a6d in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::watchdogHandler() + 0xc80 (0x7f6d8cbd57f0 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::ncclCommWatchdog() + 0x14d (0x7f6d8cbd6efd in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: <unknown function> + 0xdc253 (0x7f6df7ce1253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #5: <unknown function> + 0x94ac3 (0x7f6df8be0ac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #6: <unknown function> + 0x126850 (0x7f6df8c72850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+terminate called after throwing an instance of 'c10::DistBackendError'
+  what():  [PG ID 0 PG GUID 0(default_pg) Rank 6] Process group watchdog thread terminated with exception: [Rank 6] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600004 milliseconds before timing out.
+Exception raised from checkTimeout at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:635 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7f6dddd785e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: c10d::ProcessGroupNCCL::WorkNCCL::checkTimeout(std::optional<std::chrono::duration<long, std::ratio<1l, 1000l> > >) + 0x23d (0x7f6d8cbd3a6d in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::watchdogHandler() + 0xc80 (0x7f6d8cbd57f0 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::ncclCommWatchdog() + 0x14d (0x7f6d8cbd6efd in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: <unknown function> + 0xdc253 (0x7f6df7ce1253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #5: <unknown function> + 0x94ac3 (0x7f6df8be0ac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #6: <unknown function> + 0x126850 (0x7f6df8c72850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+Exception raised from ncclCommWatchdog at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:1905 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7f6dddd785e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0x11b4abe (0x7f6d8cba5abe in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: <unknown function> + 0xe07bed (0x7f6d8c7f8bed in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: <unknown function> + 0xdc253 (0x7f6df7ce1253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #4: <unknown function> + 0x94ac3 (0x7f6df8be0ac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #5: <unknown function> + 0x126850 (0x7f6df8c72850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+[rank5]:[E320 08:30:19.487092699 ProcessGroupNCCL.cpp:684] [Rank 5] Some NCCL operations have failed or timed out. Due to the asynchronous nature of CUDA kernels, subsequent GPU operations might run on corrupted/incomplete data.
+[rank5]:[E320 08:30:19.487113040 ProcessGroupNCCL.cpp:698] [Rank 5] To avoid data inconsistency, we are taking the entire process down.
+[rank5]:[E320 08:30:19.488491522 ProcessGroupNCCL.cpp:1899] [PG ID 0 PG GUID 0(default_pg) Rank 5] Process group watchdog thread terminated with exception: [Rank 5] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600001 milliseconds before timing out.
+Exception raised from checkTimeout at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:635 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7fa2a4cc75e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: c10d::ProcessGroupNCCL::WorkNCCL::checkTimeout(std::optional<std::chrono::duration<long, std::ratio<1l, 1000l> > >) + 0x23d (0x7fa24fbd3a6d in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::watchdogHandler() + 0xc80 (0x7fa24fbd57f0 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::ncclCommWatchdog() + 0x14d (0x7fa24fbd6efd in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: <unknown function> + 0xdc253 (0x7fa2bad52253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #5: <unknown function> + 0x94ac3 (0x7fa2bbc51ac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #6: <unknown function> + 0x126850 (0x7fa2bbce3850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+terminate called after throwing an instance of 'c10::DistBackendError'
+  what():  [PG ID 0 PG GUID 0(default_pg) Rank 5] Process group watchdog thread terminated with exception: [Rank 5] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600001 milliseconds before timing out.
+Exception raised from checkTimeout at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:635 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7fa2a4cc75e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: c10d::ProcessGroupNCCL::WorkNCCL::checkTimeout(std::optional<std::chrono::duration<long, std::ratio<1l, 1000l> > >) + 0x23d (0x7fa24fbd3a6d in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::watchdogHandler() + 0xc80 (0x7fa24fbd57f0 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::ncclCommWatchdog() + 0x14d (0x7fa24fbd6efd in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: <unknown function> + 0xdc253 (0x7fa2bad52253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #5: <unknown function> + 0x94ac3 (0x7fa2bbc51ac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #6: <unknown function> + 0x126850 (0x7fa2bbce3850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+Exception raised from ncclCommWatchdog at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:1905 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7fa2a4cc75e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0x11b4abe (0x7fa24fba5abe in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: <unknown function> + 0xe07bed (0x7fa24f7f8bed in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: <unknown function> + 0xdc253 (0x7fa2bad52253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #4: <unknown function> + 0x94ac3 (0x7fa2bbc51ac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #5: <unknown function> + 0x126850 (0x7fa2bbce3850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+[rank7]:[E320 08:30:19.506952900 ProcessGroupNCCL.cpp:684] [Rank 7] Some NCCL operations have failed or timed out. Due to the asynchronous nature of CUDA kernels, subsequent GPU operations might run on corrupted/incomplete data.
+[rank7]:[E320 08:30:19.506970655 ProcessGroupNCCL.cpp:698] [Rank 7] To avoid data inconsistency, we are taking the entire process down.
+[rank7]:[E320 08:30:19.508317221 ProcessGroupNCCL.cpp:1899] [PG ID 0 PG GUID 0(default_pg) Rank 7] Process group watchdog thread terminated with exception: [Rank 7] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600012 milliseconds before timing out.
+Exception raised from checkTimeout at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:635 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7f0e404c75e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: c10d::ProcessGroupNCCL::WorkNCCL::checkTimeout(std::optional<std::chrono::duration<long, std::ratio<1l, 1000l> > >) + 0x23d (0x7f0deb3d3a6d in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::watchdogHandler() + 0xc80 (0x7f0deb3d57f0 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::ncclCommWatchdog() + 0x14d (0x7f0deb3d6efd in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: <unknown function> + 0xdc253 (0x7f0e56527253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #5: <unknown function> + 0x94ac3 (0x7f0e57426ac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #6: <unknown function> + 0x126850 (0x7f0e574b8850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+terminate called after throwing an instance of 'c10::DistBackendError'
+  what():  [PG ID 0 PG GUID 0(default_pg) Rank 7] Process group watchdog thread terminated with exception: [Rank 7] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600012 milliseconds before timing out.
+Exception raised from checkTimeout at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:635 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7f0e404c75e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: c10d::ProcessGroupNCCL::WorkNCCL::checkTimeout(std::optional<std::chrono::duration<long, std::ratio<1l, 1000l> > >) + 0x23d (0x7f0deb3d3a6d in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::watchdogHandler() + 0xc80 (0x7f0deb3d57f0 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::ncclCommWatchdog() + 0x14d (0x7f0deb3d6efd in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: <unknown function> + 0xdc253 (0x7f0e56527253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #5: <unknown function> + 0x94ac3 (0x7f0e57426ac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #6: <unknown function> + 0x126850 (0x7f0e574b8850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+Exception raised from ncclCommWatchdog at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:1905 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7f0e404c75e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0x11b4abe (0x7f0deb3a5abe in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: <unknown function> + 0xe07bed (0x7f0deaff8bed in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: <unknown function> + 0xdc253 (0x7f0e56527253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #4: <unknown function> + 0x94ac3 (0x7f0e57426ac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #5: <unknown function> + 0x126850 (0x7f0e574b8850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+[rank4]:[E320 08:30:19.545957928 ProcessGroupNCCL.cpp:684] [Rank 4] Some NCCL operations have failed or timed out. Due to the asynchronous nature of CUDA kernels, subsequent GPU operations might run on corrupted/incomplete data.
+[rank4]:[E320 08:30:19.545975706 ProcessGroupNCCL.cpp:698] [Rank 4] To avoid data inconsistency, we are taking the entire process down.
+[rank4]:[E320 08:30:19.547299034 ProcessGroupNCCL.cpp:1899] [PG ID 0 PG GUID 0(default_pg) Rank 4] Process group watchdog thread terminated with exception: [Rank 4] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600073 milliseconds before timing out.
+Exception raised from checkTimeout at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:635 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7f7da4cc75e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: c10d::ProcessGroupNCCL::WorkNCCL::checkTimeout(std::optional<std::chrono::duration<long, std::ratio<1l, 1000l> > >) + 0x23d (0x7f7d4fbd3a6d in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::watchdogHandler() + 0xc80 (0x7f7d4fbd57f0 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::ncclCommWatchdog() + 0x14d (0x7f7d4fbd6efd in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: <unknown function> + 0xdc253 (0x7f7dbac4d253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #5: <unknown function> + 0x94ac3 (0x7f7dbbb4cac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #6: <unknown function> + 0x126850 (0x7f7dbbbde850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+terminate called after throwing an instance of 'c10::DistBackendError'
+  what():  [PG ID 0 PG GUID 0(default_pg) Rank 4] Process group watchdog thread terminated with exception: [Rank 4] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600073 milliseconds before timing out.
+Exception raised from checkTimeout at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:635 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7f7da4cc75e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: c10d::ProcessGroupNCCL::WorkNCCL::checkTimeout(std::optional<std::chrono::duration<long, std::ratio<1l, 1000l> > >) + 0x23d (0x7f7d4fbd3a6d in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::watchdogHandler() + 0xc80 (0x7f7d4fbd57f0 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::ncclCommWatchdog() + 0x14d (0x7f7d4fbd6efd in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: <unknown function> + 0xdc253 (0x7f7dbac4d253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #5: <unknown function> + 0x94ac3 (0x7f7dbbb4cac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #6: <unknown function> + 0x126850 (0x7f7dbbbde850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+Exception raised from ncclCommWatchdog at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:1905 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7f7da4cc75e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0x11b4abe (0x7f7d4fba5abe in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: <unknown function> + 0xe07bed (0x7f7d4f7f8bed in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: <unknown function> + 0xdc253 (0x7f7dbac4d253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #4: <unknown function> + 0x94ac3 (0x7f7dbbb4cac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #5: <unknown function> + 0x126850 (0x7f7dbbbde850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+[rank2]:[E320 08:30:19.639394845 ProcessGroupNCCL.cpp:684] [Rank 2] Some NCCL operations have failed or timed out. Due to the asynchronous nature of CUDA kernels, subsequent GPU operations might run on corrupted/incomplete data.
+[rank2]:[E320 08:30:19.639408610 ProcessGroupNCCL.cpp:698] [Rank 2] To avoid data inconsistency, we are taking the entire process down.
+[rank2]:[E320 08:30:19.640699792 ProcessGroupNCCL.cpp:1899] [PG ID 0 PG GUID 0(default_pg) Rank 2] Process group watchdog thread terminated with exception: [Rank 2] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600019 milliseconds before timing out.
+Exception raised from checkTimeout at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:635 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7f4ba14c75e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: c10d::ProcessGroupNCCL::WorkNCCL::checkTimeout(std::optional<std::chrono::duration<long, std::ratio<1l, 1000l> > >) + 0x23d (0x7f4b4c3d3a6d in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::watchdogHandler() + 0xc80 (0x7f4b4c3d57f0 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::ncclCommWatchdog() + 0x14d (0x7f4b4c3d6efd in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: <unknown function> + 0xdc253 (0x7f4bb7544253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #5: <unknown function> + 0x94ac3 (0x7f4bb8443ac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #6: <unknown function> + 0x126850 (0x7f4bb84d5850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+terminate called after throwing an instance of 'c10::DistBackendError'
+  what():  [PG ID 0 PG GUID 0(default_pg) Rank 2] Process group watchdog thread terminated with exception: [Rank 2] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600019 milliseconds before timing out.
+Exception raised from checkTimeout at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:635 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7f4ba14c75e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: c10d::ProcessGroupNCCL::WorkNCCL::checkTimeout(std::optional<std::chrono::duration<long, std::ratio<1l, 1000l> > >) + 0x23d (0x7f4b4c3d3a6d in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::watchdogHandler() + 0xc80 (0x7f4b4c3d57f0 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::ncclCommWatchdog() + 0x14d (0x7f4b4c3d6efd in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: <unknown function> + 0xdc253 (0x7f4bb7544253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #5: <unknown function> + 0x94ac3 (0x7f4bb8443ac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #6: <unknown function> + 0x126850 (0x7f4bb84d5850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+Exception raised from ncclCommWatchdog at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:1905 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7f4ba14c75e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0x11b4abe (0x7f4b4c3a5abe in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: <unknown function> + 0xe07bed (0x7f4b4bff8bed in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: <unknown function> + 0xdc253 (0x7f4bb7544253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #4: <unknown function> + 0x94ac3 (0x7f4bb8443ac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #5: <unknown function> + 0x126850 (0x7f4bb84d5850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+[rank3]:[E320 08:30:19.722859503 ProcessGroupNCCL.cpp:684] [Rank 3] Some NCCL operations have failed or timed out. Due to the asynchronous nature of CUDA kernels, subsequent GPU operations might run on corrupted/incomplete data.
+[rank3]:[E320 08:30:19.722880210 ProcessGroupNCCL.cpp:698] [Rank 3] To avoid data inconsistency, we are taking the entire process down.
+[rank3]:[E320 08:30:19.724250700 ProcessGroupNCCL.cpp:1899] [PG ID 0 PG GUID 0(default_pg) Rank 3] Process group watchdog thread terminated with exception: [Rank 3] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600055 milliseconds before timing out.
+Exception raised from checkTimeout at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:635 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7f5eedec75e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: c10d::ProcessGroupNCCL::WorkNCCL::checkTimeout(std::optional<std::chrono::duration<long, std::ratio<1l, 1000l> > >) + 0x23d (0x7f5e98dd3a6d in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::watchdogHandler() + 0xc80 (0x7f5e98dd57f0 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::ncclCommWatchdog() + 0x14d (0x7f5e98dd6efd in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: <unknown function> + 0xdc253 (0x7f5f03f99253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #5: <unknown function> + 0x94ac3 (0x7f5f04e98ac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #6: <unknown function> + 0x126850 (0x7f5f04f2a850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+terminate called after throwing an instance of 'c10::DistBackendError'
+  what():  [PG ID 0 PG GUID 0(default_pg) Rank 3] Process group watchdog thread terminated with exception: [Rank 3] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600055 milliseconds before timing out.
+Exception raised from checkTimeout at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:635 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7f5eedec75e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: c10d::ProcessGroupNCCL::WorkNCCL::checkTimeout(std::optional<std::chrono::duration<long, std::ratio<1l, 1000l> > >) + 0x23d (0x7f5e98dd3a6d in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::watchdogHandler() + 0xc80 (0x7f5e98dd57f0 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::ncclCommWatchdog() + 0x14d (0x7f5e98dd6efd in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: <unknown function> + 0xdc253 (0x7f5f03f99253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #5: <unknown function> + 0x94ac3 (0x7f5f04e98ac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #6: <unknown function> + 0x126850 (0x7f5f04f2a850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+Exception raised from ncclCommWatchdog at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:1905 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7f5eedec75e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0x11b4abe (0x7f5e98da5abe in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: <unknown function> + 0xe07bed (0x7f5e989f8bed in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: <unknown function> + 0xdc253 (0x7f5f03f99253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #4: <unknown function> + 0x94ac3 (0x7f5f04e98ac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #5: <unknown function> + 0x126850 (0x7f5f04f2a850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+[rank1]:[E320 08:30:19.969329660 ProcessGroupNCCL.cpp:684] [Rank 1] Some NCCL operations have failed or timed out. Due to the asynchronous nature of CUDA kernels, subsequent GPU operations might run on corrupted/incomplete data.
+[rank1]:[E320 08:30:19.969348062 ProcessGroupNCCL.cpp:698] [Rank 1] To avoid data inconsistency, we are taking the entire process down.
+[rank1]:[E320 08:30:19.971117119 ProcessGroupNCCL.cpp:1899] [PG ID 0 PG GUID 0(default_pg) Rank 1] Process group watchdog thread terminated with exception: [Rank 1] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600094 milliseconds before timing out.
+Exception raised from checkTimeout at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:635 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7ff6313785e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: c10d::ProcessGroupNCCL::WorkNCCL::checkTimeout(std::optional<std::chrono::duration<long, std::ratio<1l, 1000l> > >) + 0x23d (0x7ff5dc1d3a6d in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::watchdogHandler() + 0xc80 (0x7ff5dc1d57f0 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::ncclCommWatchdog() + 0x14d (0x7ff5dc1d6efd in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: <unknown function> + 0xdc253 (0x7ff64744f253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #5: <unknown function> + 0x94ac3 (0x7ff64834eac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #6: <unknown function> + 0x126850 (0x7ff6483e0850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+terminate called after throwing an instance of 'c10::DistBackendError'
+  what():  [PG ID 0 PG GUID 0(default_pg) Rank 1] Process group watchdog thread terminated with exception: [Rank 1] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=799842, OpType=BROADCAST, NumelIn=256, NumelOut=256, Timeout(ms)=600000) ran for 600094 milliseconds before timing out.
+Exception raised from checkTimeout at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:635 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7ff6313785e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: c10d::ProcessGroupNCCL::WorkNCCL::checkTimeout(std::optional<std::chrono::duration<long, std::ratio<1l, 1000l> > >) + 0x23d (0x7ff5dc1d3a6d in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: c10d::ProcessGroupNCCL::watchdogHandler() + 0xc80 (0x7ff5dc1d57f0 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: c10d::ProcessGroupNCCL::ncclCommWatchdog() + 0x14d (0x7ff5dc1d6efd in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #4: <unknown function> + 0xdc253 (0x7ff64744f253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #5: <unknown function> + 0x94ac3 (0x7ff64834eac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #6: <unknown function> + 0x126850 (0x7ff6483e0850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+Exception raised from ncclCommWatchdog at /pytorch/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp:1905 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x98 (0x7ff6313785e8 in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0x11b4abe (0x7ff5dc1a5abe in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #2: <unknown function> + 0xe07bed (0x7ff5dbdf8bed in /jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so)
+frame #3: <unknown function> + 0xdc253 (0x7ff64744f253 in /usr/lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #4: <unknown function> + 0x94ac3 (0x7ff64834eac3 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+frame #5: <unknown function> + 0x126850 (0x7ff6483e0850 in /usr/lib/x86_64-linux-gnu/libc.so.6)
+
+W0320 08:30:21.436000 3204672 torch/distributed/elastic/multiprocessing/api.py:900] Sending process 3204782 closing signal SIGTERM
+W0320 08:30:21.438000 3204672 torch/distributed/elastic/multiprocessing/api.py:900] Sending process 3204783 closing signal SIGTERM
+W0320 08:30:21.440000 3204672 torch/distributed/elastic/multiprocessing/api.py:900] Sending process 3204784 closing signal SIGTERM
+W0320 08:30:21.442000 3204672 torch/distributed/elastic/multiprocessing/api.py:900] Sending process 3204785 closing signal SIGTERM
+W0320 08:30:21.444000 3204672 torch/distributed/elastic/multiprocessing/api.py:900] Sending process 3204786 closing signal SIGTERM
+W0320 08:30:21.447000 3204672 torch/distributed/elastic/multiprocessing/api.py:900] Sending process 3204787 closing signal SIGTERM
+W0320 08:30:21.447000 3204672 torch/distributed/elastic/multiprocessing/api.py:900] Sending process 3204789 closing signal SIGTERM
+/usr/lib/python3.10/multiprocessing/resource_tracker.py:224: UserWarning: resource_tracker: There appear to be 14 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+08:30:21.703 [W] Signal 15 received — will save checkpoint and exit after this optimizer step.    (3204782:train_pytorch.py:525)
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/jedata/jemotor/code/openpi_pi05_torch_1/scripts/train_pytorch.py", line 687, in <module>
+[rank0]:     main()
+[rank0]:   File "/jedata/jemotor/code/openpi_pi05_torch_1/scripts/train_pytorch.py", line 683, in main
+[rank0]:     train_loop(config)
+[rank0]:   File "/jedata/jemotor/code/openpi_pi05_torch_1/scripts/train_pytorch.py", line 563, in train_loop
+[rank0]:     loss.backward()
+[rank0]:   File "/jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/_tensor.py", line 648, in backward
+[rank0]:     torch.autograd.backward(
+[rank0]:   File "/jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/autograd/__init__.py", line 353, in backward
+[rank0]:     _engine_run_backward(
+[rank0]:   File "/jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/autograd/graph.py", line 824, in _engine_run_backward
+[rank0]:     return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+[rank0]:   File "/jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/utils/data/_utils/signal_handling.py", line 73, in handler
+[rank0]:     _error_if_any_worker_fails()
+[rank0]: RuntimeError: DataLoader worker (pid 3213382) is killed by signal: Terminated. 
+/usr/lib/python3.10/multiprocessing/resource_tracker.py:224: UserWarning: resource_tracker: There appear to be 14 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+/usr/lib/python3.10/multiprocessing/resource_tracker.py:224: UserWarning: resource_tracker: There appear to be 14 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+/usr/lib/python3.10/multiprocessing/resource_tracker.py:224: UserWarning: resource_tracker: There appear to be 14 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+/usr/lib/python3.10/multiprocessing/resource_tracker.py:224: UserWarning: resource_tracker: There appear to be 14 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+/usr/lib/python3.10/multiprocessing/resource_tracker.py:224: UserWarning: resource_tracker: There appear to be 14 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+W0320 08:30:51.457000 3204672 torch/distributed/elastic/multiprocessing/api.py:919] Unable to shutdown process 3204782 via Signals.SIGTERM, forcefully exiting via Signals.SIGKILL
+E0320 08:30:52.955000 3204672 torch/distributed/elastic/multiprocessing/api.py:874] failed (exitcode: -6) local_rank: 6 (pid: 3204788) of binary: /jedata/jemotor/code/openpi/.venv/bin/python
+Traceback (most recent call last):
+  File "/jedata/jemotor/code/openpi/.venv/bin/torchrun", line 10, in <module>
+    sys.exit(main())
+  File "/jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 355, in wrapper
+    return f(*args, **kwargs)
+  File "/jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/distributed/run.py", line 892, in main
+    run(args)
+  File "/jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/distributed/run.py", line 883, in run
+    elastic_launch(
+  File "/jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 139, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/jedata/jemotor/code/openpi/.venv/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 270, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+========================================================
+scripts/train_pytorch.py FAILED
+--------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+--------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-03-20_08:30:21
+  host      : dechang-hzz2
+  rank      : 6 (local_rank: 6)
+  exitcode  : -6 (pid: 3204788)
+  error_file: <N/A>
+  traceback : Signal 6 (SIGABRT) received by PID 3204788
+========================================================

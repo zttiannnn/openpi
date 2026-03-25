@@ -1,0 +1,65 @@
+Step 3: infer time = 0.5288 seconds
+  RTC: mode=executed_prefix_b1, inference_delay=14, prev_actions=set, executed_prefix_ref=set
+  raw_actions (normalized) range: [-1.0982, 0.6276], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.041157 step_delta_l2_max=0.091844 step_delta_abs_max=0.084398 step_acc_l2_mean=0.017923 step_acc_l2_max=0.035060 step_acc_abs_max=0.028611
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.053426, 0.028004, 0.027682, 0.018327, 0.014668, 0.084398] step_acc_abs_max=[0.019473, 0.021656, 0.012718, 0.019678, 0.013171, 0.028611]
+  policy_actions (denormalized, pre_postprocess) range: [-94822.6467, 116367.3097], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=527.086035 state_to_first_abs_max=455.094090 step_delta_l2_mean=2010.633686 step_delta_l2_max=5676.669868 step_delta_abs_max=5482.246905 step_acc_l2_mean=849.917980 step_acc_l2_max=1926.006313 step_acc_abs_max=1858.481178
+  policy_chunk_joint: joint_dims=6 state_to_first=[0.203125, 211.414062, -23.437500, -158.496582, -18.515625, 455.093750] step_delta_abs_max=[1834.674805, 1526.867188, 1270.828125, 413.441864, 504.109375, 5482.246094] step_acc_abs_max=[668.707031, 1180.750000, 583.867188, 443.898193, 452.671875, 1858.481323]
+  worker_actions (postprocess) range: [-94724.6632, 116158.4479], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=527.086035 state_to_first_abs_max=455.094090 step_delta_l2_mean=1923.611148 step_delta_l2_max=4894.205956 step_delta_abs_max=4658.276133 step_acc_l2_mean=399.232251 step_acc_l2_max=1078.386280 step_acc_abs_max=1038.134919
+  worker_chunk_joint: joint_dims=6 state_to_first=[0.203125, 211.414062, -23.437500, -158.496582, -18.515625, 455.093750] step_delta_abs_max=[1656.480469, 1121.539062, 1155.593750, 342.724701, 418.375000, 4658.276367] step_acc_abs_max=[553.597656, 449.289062, 302.453125, 175.218384, 171.734375, 1038.134888]
+  RTC B1: guided_window_start=13 prefix_steps=5 delay_estimate=14 boundary_l2_before=123534.570312 boundary_l2_after=122851.101562 boundary_abs_max_before=81172.710938 boundary_abs_max_after=80704.078125 prefix_acc_abs_max_before=82129.388672 prefix_acc_abs_max_after=81515.763672
+  RTC result #3: action_index_before_inference=6 leftover_len_at_send=30 real_delay=12 rtc_execution_horizon=10 effective_guided_steps=0 overlap=18 overlap_l2_before=3.927217 overlap_l2_after=77558.289062
+  RTC B1: guided_window_start=13 prefix_steps=5 delay_estimate=14 real_delay=12 boundary_l2_before=123534.570312 boundary_l2_after=122851.101562 boundary_abs_max_before=81172.710938 boundary_abs_max_after=80704.078125 prefix_acc_abs_max_before=82129.388672 prefix_acc_abs_max_after=81515.763672
+  RTC B1 boundary window: guided_window=[13, 18) real_boundary=12 hit=no miss_steps=1
+  RTC B1 boundary risk: real boundary fell outside the guided window by 1 step(s)
+  queue_boundary: joint_dims=6 delta=[4918.628418, 202.214432, -4465.653809, 50.640263, 784.278992, 27005.466797] l2=27822.451172 abs_max=27005.466797
+Step 4: infer time = 0.5509 seconds
+  RTC: mode=executed_prefix_b1, inference_delay=12, prev_actions=set, executed_prefix_ref=set
+  raw_actions (normalized) range: [-1.0112, 0.6690], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.027091 step_delta_l2_max=0.054472 step_delta_abs_max=0.036625 step_acc_l2_mean=0.011794 step_acc_l2_max=0.027152 step_acc_abs_max=0.019249
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.036625, 0.024715, 0.034941, 0.016139, 0.023386, 0.029633] step_acc_abs_max=[0.015046, 0.013316, 0.019249, 0.010180, 0.016478, 0.014311]
+  policy_actions (denormalized, pre_postprocess) range: [-100815.7424, 123817.1002], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=527.258752 state_to_first_abs_max=360.956628 step_delta_l2_mean=1235.103779 step_delta_l2_max=2613.276375 step_delta_abs_max=1924.877630 step_acc_l2_mean=542.294944 step_acc_l2_max=1195.899128 step_acc_abs_max=929.589046
+  policy_chunk_joint: joint_dims=6 state_to_first=[51.964844, 299.125000, 67.421875, -84.958130, 209.218750, 360.957031] step_delta_abs_max=[1257.710938, 1347.554688, 1604.078125, 364.069763, 803.738281, 1924.878906] step_acc_abs_max=[516.671875, 726.054688, 883.695312, 229.643066, 566.320312, 929.589844]
+  worker_actions (postprocess) range: [-100629.7939, 123464.8655], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=527.258752 state_to_first_abs_max=360.956628 step_delta_l2_mean=1178.150444 step_delta_l2_max=2412.185711 step_delta_abs_max=1527.958201 step_acc_l2_mean=243.096044 step_acc_l2_max=649.775610 step_acc_abs_max=442.734806
+  worker_chunk_joint: joint_dims=6 state_to_first=[51.964844, 299.125000, 67.421875, -84.958130, 209.218750, 360.957031] step_delta_abs_max=[1074.355469, 1184.296875, 1386.671875, 308.584747, 658.910156, 1527.957031] step_acc_abs_max=[364.000000, 383.859375, 322.375000, 137.868408, 204.226562, 442.734375]
+  RTC B1: guided_window_start=11 prefix_steps=5 delay_estimate=12 boundary_l2_before=150410.703125 boundary_l2_after=149230.640625 boundary_abs_max_before=97797.828125 boundary_abs_max_after=97178.500000 prefix_acc_abs_max_before=98378.983398 prefix_acc_abs_max_after=97670.002930
+  RTC result #4: action_index_before_inference=8 leftover_len_at_send=30 real_delay=13 rtc_execution_horizon=10 effective_guided_steps=0 overlap=17 overlap_l2_before=4.251593 overlap_l2_after=78625.539062
+  RTC B1: guided_window_start=11 prefix_steps=5 delay_estimate=12 real_delay=13 boundary_l2_before=150410.703125 boundary_l2_after=149230.640625 boundary_abs_max_before=97797.828125 boundary_abs_max_after=97178.500000 prefix_acc_abs_max_before=98378.983398 prefix_acc_abs_max_after=97670.002930
+  RTC B1 boundary window: guided_window=[11, 16) real_boundary=13 hit=yes miss_steps=0
+  queue_boundary: joint_dims=6 delta=[61.765114, 495.589966, -695.934998, -2369.814209, 163.558456, 9227.914062] l2=9567.179688 abs_max=9227.914062
+Step 5: infer time = 0.6014 seconds
+  RTC: mode=executed_prefix_b1, inference_delay=13, prev_actions=set, executed_prefix_ref=set
+  raw_actions (normalized) range: [-1.0027, 0.7255], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.020071 step_delta_l2_max=0.038040 step_delta_abs_max=0.029755 step_acc_l2_mean=0.020430 step_acc_l2_max=0.040487 step_acc_abs_max=0.033635
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.009308, 0.018426, 0.021547, 0.019648, 0.029755, 0.012833] step_acc_abs_max=[0.018585, 0.020904, 0.033635, 0.019010, 0.024065, 0.018617]
+  policy_actions (denormalized, pre_postprocess) range: [-102144.2335, 127924.9540], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=907.265663 state_to_first_abs_max=855.404799 step_delta_l2_mean=853.783926 step_delta_l2_max=1471.332062 step_delta_abs_max=1022.647811 step_acc_l2_mean=900.538981 step_acc_l2_max=1735.583795 step_acc_abs_max=1544.115939
+  policy_chunk_joint: joint_dims=6 state_to_first=[-213.449219, 127.609375, 37.351562, -90.602783, -141.296875, 855.406250] step_delta_abs_max=[319.652344, 1004.632812, 989.210938, 443.233887, 1022.648438, 833.609375] step_acc_abs_max=[638.222656, 1139.781250, 1544.117188, 428.846680, 827.082031, 1209.281250]
+  worker_actions (postprocess) range: [-101917.6255, 127533.2531], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=907.265663 state_to_first_abs_max=855.404799 step_delta_l2_mean=682.197461 step_delta_l2_max=1068.072765 step_delta_abs_max=798.761957 step_acc_l2_mean=352.591293 step_acc_l2_max=622.305751 step_acc_abs_max=583.266389
+  worker_chunk_joint: joint_dims=6 state_to_first=[-213.449219, 127.609375, 37.351562, -90.602783, -141.296875, 855.406250] step_delta_abs_max=[158.128906, 726.093750, 680.750000, 294.449219, 798.761719, 653.156250] step_acc_abs_max=[238.886719, 447.546875, 583.265625, 167.323730, 335.281250, 454.207031]
+  RTC B1: guided_window_start=12 prefix_steps=5 delay_estimate=13 boundary_l2_before=177835.390625 boundary_l2_after=176673.265625 boundary_abs_max_before=114335.218750 boundary_abs_max_after=113731.328125 prefix_acc_abs_max_before=114265.700195 prefix_acc_abs_max_after=113509.860352
+  RTC result #5: action_index_before_inference=7 leftover_len_at_send=30 real_delay=14 rtc_execution_horizon=10 effective_guided_steps=0 overlap=16 overlap_l2_before=3.023707 overlap_l2_after=19980.279297
+  RTC B1: guided_window_start=12 prefix_steps=5 delay_estimate=13 real_delay=14 boundary_l2_before=177835.390625 boundary_l2_after=176673.265625 boundary_abs_max_before=114335.218750 boundary_abs_max_after=113731.328125 prefix_acc_abs_max_before=114265.700195 prefix_acc_abs_max_after=113509.860352
+  RTC B1 boundary window: guided_window=[12, 17) real_boundary=14 hit=yes miss_steps=0
+  queue_boundary: joint_dims=6 delta=[1676.799438, 1149.995117, -1610.141602, -1036.988525, 875.981384, 2109.834229] l2=3608.433105 abs_max=2109.834229
+Step 6: infer time = 0.5988 seconds
+  RTC: mode=executed_prefix_b1, inference_delay=14, prev_actions=set, executed_prefix_ref=set
+  raw_actions (normalized) range: [-0.2586, 0.6709], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.013898 step_delta_l2_max=0.031953 step_delta_abs_max=0.025524 step_acc_l2_mean=0.014045 step_acc_l2_max=0.048521 step_acc_abs_max=0.032157
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.013549, 0.017867, 0.016655, 0.010741, 0.025524, 0.013165] step_acc_abs_max=[0.026131, 0.030431, 0.021198, 0.017365, 0.032157, 0.015589]
+  policy_actions (denormalized, pre_postprocess) range: [-100998.4304, 132491.6868], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=321.911459 state_to_first_abs_max=247.382767 step_delta_l2_mean=612.042635 step_delta_l2_max=1365.051966 step_delta_abs_max=974.188998 step_acc_l2_mean=620.485455 step_acc_l2_max=2133.240059 step_acc_abs_max=1659.200522
+  policy_chunk_joint: joint_dims=6 state_to_first=[-85.800781, 247.382812, 4.570312, -53.072510, -178.070312, -22.835938] step_delta_abs_max=[465.289062, 974.187500, 764.601562, 242.290283, 877.242188, 855.125000] step_acc_abs_max=[897.351562, 1659.203125, 973.140625, 391.722900, 1105.195312, 1012.609375]
+  worker_actions (postprocess) range: [-100998.4304, 132107.6648], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=321.911459 state_to_first_abs_max=247.382767 step_delta_l2_mean=477.951015 step_delta_l2_max=908.640521 step_delta_abs_max=678.287822 step_acc_l2_mean=246.133006 step_acc_l2_max=858.894108 step_acc_abs_max=679.105517
+  worker_chunk_joint: joint_dims=6 state_to_first=[-85.800781, 247.382812, 4.570312, -53.072510, -178.070312, -22.835938] step_delta_abs_max=[223.839844, 678.289062, 560.429688, 124.398926, 631.500000, 394.886719] step_acc_abs_max=[344.562500, 679.125000, 334.476562, 148.150391, 434.703125, 460.242188]
+  RTC B1: guided_window_start=13 prefix_steps=5 delay_estimate=14 boundary_l2_before=185857.234375 boundary_l2_after=184688.250000 boundary_abs_max_before=123237.156250 boundary_abs_max_after=122828.507812 prefix_acc_abs_max_before=123435.796143 prefix_acc_abs_max_after=122840.706299
+  RTC result #6: action_index_before_inference=6 leftover_len_at_send=30 real_delay=13 rtc_execution_horizon=10 effective_guided_steps=0 overlap=17 overlap_l2_before=1.051343 overlap_l2_after=25423.990234
+  RTC B1: guided_window_start=13 prefix_steps=5 delay_estimate=14 real_delay=13 boundary_l2_before=185857.234375 boundary_l2_after=184688.250000 boundary_abs_max_before=123237.156250 boundary_abs_max_after=122828.507812 prefix_acc_abs_max_before=123435.796143 prefix_acc_abs_max_after=122840.706299
+  RTC B1 boundary window: guided_window=[13, 18) real_boundary=13 hit=yes miss_steps=0
+  queue_boundary: joint_dims=6 delta=[-74.468117, -675.483215, -897.486145, -250.328293, 1967.107300, -550.059875] l2=2345.644043 abs_max=1967.107300

@@ -1,0 +1,455 @@
+Running THOR async engineering baseline: 20Hz, action_steps=20, cubic transition + EMA horizon smoothing, no RTC
+load extensions from /usr/local/lib/python3.12/dist-packages/extensions
+OrbbecCameraConfig(fps=30, width=640, height=480, device_list=None, use_depth=True, color_mode='rgb', index_or_path='CP0H953000YB', channels=3, TemporalFilter_alpha=0.5, warmup_s=1)
+OrbbecCameraConfig(fps=30, width=640, height=480, device_list=None, use_depth=True, color_mode='rgb', index_or_path='CP02653000TL', channels=3, TemporalFilter_alpha=0.5, warmup_s=1)
+CP0H953000YB
+CP02653000TL
+WARNING:root:CP0H953000YB No frames received
+WARNING:root:CP0H953000YB No frames received
+WARNING:root:CP0H953000YB No frames received
+WARNING:root:CP02653000TL No frames received
+WARNING:root:CP02653000TL No frames received
+WARNING:root:CP02653000TL No frames received
+load extensions from /usr/local/lib/python3.12/dist-packages/extensions
+Checkpoint action norm stats: mean=[47.202168, 1448.041382, -955.351685, 108.137665, -222.306992, -93.740135] std=[9731.508789, 17616.267578, 14329.407227, 7096.434082, 11659.133789, 18246.578125] q01=[-39813.531250, -54908.152344, -43613.023438, -24899.050781, -37470.988281, -53693.304688] q99=[28866.771484, 54138.460938, 48203.757812, 20217.968750, 31267.175781, 76220.695312]
+Loaded norm stats from /workspace/robot_repo/openpi_torch/openpi/checkpoints/pi05_agileX_thor/formal_8gpu_bs512_from_30000/9000/openpi_stats
+Step 0: infer time = 16.9379 seconds
+  raw_actions (normalized) range: [-1.3744, 1.4415], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.055677 step_delta_l2_max=0.086426 step_delta_abs_max=0.058140 step_acc_l2_mean=0.010977 step_acc_l2_max=0.026142 step_acc_abs_max=0.017951
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.058140, 0.044470, 0.053698, 0.014787, 0.050846, 0.024326] step_acc_abs_max=[0.011407, 0.017951, 0.014810, 0.010764, 0.014457, 0.010270]
+  policy_actions (denormalized, pre_postprocess) range: [-54077.6249, 75762.4389], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=301.771129 state_to_first_abs_max=206.389064 step_delta_l2_mean=2431.701010 step_delta_l2_max=3877.908169 step_delta_abs_max=2465.169712 step_acc_l2_mean=503.484013 step_acc_l2_max=1214.288106 step_acc_abs_max=978.758276
+  policy_chunk_joint: joint_dims=6 state_to_first=[116.033325, -171.099426, 71.985092, -21.837402, 8.478516, 206.389160] step_delta_abs_max=[1996.545898, 2424.669922, 2465.169922, 333.582520, 1747.535156, 1580.149902] step_acc_abs_max=[391.708740, 978.755859, 679.901611, 242.825195, 496.867188, 667.076904]
+  worker_actions (postprocess) range: [-53962.6360, 75024.0837], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=301.771129 state_to_first_abs_max=206.389064 step_delta_l2_mean=2365.403690 step_delta_l2_max=3492.054271 step_delta_abs_max=2256.747133 step_acc_l2_mean=266.698284 step_acc_l2_max=565.084730 step_acc_abs_max=468.671824
+  worker_chunk_joint: joint_dims=6 state_to_first=[116.033325, -171.099426, 71.985092, -21.837402, 8.478516, 206.389160] step_delta_abs_max=[1908.615234, 2134.099609, 2256.748047, 308.168213, 1626.097656, 1111.477539] step_acc_abs_max=[250.403809, 344.091797, 430.716064, 164.856934, 294.712891, 468.671387]
+  main_actions (aligned_from_worker) range: [-53962.6360, 75024.0837], shape=(50, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=301.771129 state_to_first_abs_max=206.389064 step_delta_l2_mean=2365.403690 step_delta_l2_max=3492.054271 step_delta_abs_max=2256.747133 step_acc_l2_mean=266.698284 step_acc_l2_max=565.084730 step_acc_abs_max=468.671824
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[116.033325, -171.099426, 71.985092, -21.837402, 8.478516, 206.389160] step_delta_abs_max=[1908.615234, 2134.099609, 2256.748047, 308.168213, 1626.097656, 1111.477539] step_acc_abs_max=[250.403809, 344.091797, 430.716064, 164.856934, 294.712891, 468.671387]
+  main_actions (post_main_postprocess) range: [-53916.6118, 74196.1074], shape=(50, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=301.771129 state_to_first_abs_max=206.389064 step_delta_l2_mean=2311.517972 step_delta_l2_max=3365.019222 step_delta_abs_max=2186.274620 step_acc_l2_mean=194.309547 step_acc_l2_max=471.171551 step_acc_abs_max=365.798339
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[116.033325, -171.099426, 71.985092, -21.837402, 8.478516, 206.389160] step_delta_abs_max=[1853.521484, 2070.154297, 2186.274414, 284.242920, 1589.238281, 745.679688] step_acc_abs_max=[230.057251, 294.934631, 334.052185, 103.623291, 196.406250, 365.798828]
+  queue_boundary: joint_dims=6 delta=n/a l2=n/a abs_max=n/a
+  queue_actions (post_transition) range: [-53916.6133, 74196.1094], shape=(50, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=301.771176 state_to_first_abs_max=206.389160 step_delta_l2_mean=2311.517985 step_delta_l2_max=3365.017748 step_delta_abs_max=2186.274414 step_acc_l2_mean=194.309591 step_acc_l2_max=471.171454 step_acc_abs_max=365.798828
+  queue_chunk_joint: joint_dims=6 state_to_first=[116.033325, -171.099426, 71.985092, -21.837402, 8.478516, 206.389160] step_delta_abs_max=[1853.521484, 2070.154297, 2186.274414, 284.242920, 1589.238281, 745.679688] step_acc_abs_max=[230.057251, 294.934631, 334.052185, 103.623291, 196.406250, 365.798828]
+Step 1: infer time = 5.5582 seconds
+  raw_actions (normalized) range: [-1.2166, 1.1130], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.059926 step_delta_l2_max=0.081598 step_delta_abs_max=0.066898 step_acc_l2_mean=0.012103 step_acc_l2_max=0.020694 step_acc_abs_max=0.017886
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.066898, 0.042261, 0.051867, 0.014166, 0.065704, 0.044489] step_acc_abs_max=[0.013267, 0.009915, 0.013390, 0.008145, 0.017886, 0.011579]
+  policy_actions (denormalized, pre_postprocess) range: [-68128.3185, 93216.3438], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=458.793516 state_to_first_abs_max=374.155386 step_delta_l2_mean=2621.627621 step_delta_l2_max=3676.121110 step_delta_abs_max=2889.873729 step_acc_l2_mean=522.095643 step_acc_l2_max=930.121306 step_acc_abs_max=752.166606
+  policy_chunk_joint: joint_dims=6 state_to_first=[149.007812, -198.052734, 48.220703, -45.502441, 68.375000, 374.155273] step_delta_abs_max=[2297.282227, 2304.216797, 2381.148438, 319.561035, 2258.167969, 2889.875000] step_acc_abs_max=[455.579102, 540.582031, 614.710938, 183.744019, 614.722656, 752.167969]
+  worker_actions (postprocess) range: [-67300.4433, 92233.9324], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=458.793516 state_to_first_abs_max=374.155386 step_delta_l2_mean=2535.959907 step_delta_l2_max=3250.280883 step_delta_abs_max=2613.094726 step_acc_l2_mean=284.209301 step_acc_l2_max=977.911187 step_acc_abs_max=661.003314
+  worker_chunk_joint: joint_dims=6 state_to_first=[149.007812, -198.052734, 48.220703, -45.502441, 68.375000, 374.155273] step_delta_abs_max=[2098.744141, 1922.621094, 1922.205078, 248.572021, 1991.890625, 2613.093750] step_acc_abs_max=[310.440918, 661.003906, 588.210938, 90.614014, 425.851562, 515.625977]
+  main_actions (aligned_from_worker) range: [-67300.4433, 92233.9324], shape=(20, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=66195.512193 state_to_first_abs_max=47968.382081 step_delta_l2_mean=2758.480588 step_delta_l2_max=3250.280883 step_delta_abs_max=2613.094726 step_acc_l2_mean=266.296774 step_acc_l2_max=555.645750 step_acc_abs_max=515.626561
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[-10945.027344, 47968.382812, -28140.253906, -1025.641113, 34177.875000, -183.704102] step_delta_abs_max=[2098.744141, 1095.335938, 827.875000, 202.541504, 156.593750, 2613.093750] step_acc_abs_max=[224.726562, 191.140625, 170.425781, 70.999268, 128.226562, 515.625977]
+  main_actions (post_main_postprocess) range: [-66514.8962, 91257.6393], shape=(20, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=66195.512193 state_to_first_abs_max=47968.382081 step_delta_l2_mean=2592.238052 step_delta_l2_max=3169.008324 step_delta_abs_max=2490.827746 step_acc_l2_mean=229.519137 step_acc_l2_max=563.109534 step_acc_abs_max=483.241811
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[-10945.027344, 47968.382812, -28140.253906, -1025.641113, 34177.875000, -183.704102] step_delta_abs_max=[2018.554688, 1041.539062, 785.546875, 188.437500, 141.984375, 2490.828125] step_acc_abs_max=[483.241211, 222.656250, 130.605469, 46.794434, 79.015625, 391.689941]
+  queue_boundary: joint_dims=6 delta=[4022.743164, 272.273438, -3442.164062, -1016.067139, 7319.292969, 1446.436523] l2=9208.784180 abs_max=7319.292969
+  chunk_handoff_dump: saved scripts/debug/chunk_handoff_dumps_async_postprocess_20hz_20step_9000/step_000001_mode_no_rtc.npz
+  queue_actions (post_transition) range: [-66514.8984, 91257.6406], shape=(20, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=66195.514119 state_to_first_abs_max=47968.382812 step_delta_l2_mean=2592.238006 step_delta_l2_max=3169.008543 step_delta_abs_max=2490.828125 step_acc_l2_mean=229.519294 step_acc_l2_max=563.106446 step_acc_abs_max=483.241211
+  queue_chunk_joint: joint_dims=6 state_to_first=[-10945.027344, 47968.382812, -28140.253906, -1025.641113, 34177.875000, -183.704102] step_delta_abs_max=[2018.554688, 1041.539062, 785.546875, 188.437500, 141.984375, 2490.828125] step_acc_abs_max=[483.241211, 222.656250, 130.605469, 46.794434, 79.015625, 391.689941]
+Step 2: infer time = 0.2528 seconds
+  raw_actions (normalized) range: [-1.0579, 0.8783], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.046007 step_delta_l2_max=0.090371 step_delta_abs_max=0.067207 step_acc_l2_mean=0.012719 step_acc_l2_max=0.033182 step_acc_abs_max=0.021639
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.067207, 0.029291, 0.035798, 0.028595, 0.037967, 0.051951] step_acc_abs_max=[0.021639, 0.011299, 0.011690, 0.015648, 0.009762, 0.019578]
+  policy_actions (denormalized, pre_postprocess) range: [-96477.4719, 118591.5551], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=670.600947 state_to_first_abs_max=522.017098 step_delta_l2_mean=2098.065798 step_delta_l2_max=4287.415202 step_delta_abs_max=3374.572862 step_acc_l2_mean=585.878016 step_acc_l2_max=1668.700013 step_acc_abs_max=1271.730749
+  policy_chunk_joint: joint_dims=6 state_to_first=[176.889648, -351.093750, 123.593750, -14.993652, -84.531250, 522.017090] step_delta_abs_max=[2307.885742, 1597.046875, 1643.437500, 645.063965, 1304.894531, 3374.574219] step_acc_abs_max=[743.101562, 616.046875, 536.687500, 352.998535, 335.511719, 1271.734375]
+  worker_actions (postprocess) range: [-96413.9827, 118510.6663], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=670.600947 state_to_first_abs_max=522.017098 step_delta_l2_mean=2051.085333 step_delta_l2_max=3913.365789 step_delta_abs_max=2945.829492 step_acc_l2_mean=289.036425 step_acc_l2_max=775.673850 step_acc_abs_max=738.106628
+  worker_chunk_joint: joint_dims=6 state_to_first=[176.889648, -351.093750, 123.593750, -14.993652, -84.531250, 522.017090] step_delta_abs_max=[2138.689453, 1499.859375, 1543.671875, 490.339050, 810.914062, 2945.830078] step_acc_abs_max=[449.818359, 259.429688, 240.320312, 189.771027, 183.632812, 738.105957]
+  main_actions (aligned_from_worker) range: [-96413.9827, 118510.6663], shape=(44, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=17445.715937 state_to_first_abs_max=11522.183302 step_delta_l2_mean=1914.538699 step_delta_l2_max=3757.653194 step_delta_abs_max=2827.216136 step_acc_l2_mean=262.364699 step_acc_l2_max=752.487853 step_acc_abs_max=572.901778
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[-10735.998047, 4585.593750, -4390.242188, -473.963135, 3975.437500, -11522.183594] step_delta_abs_max=[2070.587891, 1499.859375, 1543.671875, 490.339050, 501.214844, 2827.216797] step_acc_abs_max=[354.367188, 259.429688, 228.804688, 189.771027, 145.179688, 572.902344]
+  main_actions (post_main_postprocess) range: [-96366.7827, 118397.4053], shape=(44, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=17445.715937 state_to_first_abs_max=11522.183302 step_delta_l2_mean=1886.454755 step_delta_l2_max=3203.299580 step_delta_abs_max=2332.149746 step_acc_l2_mean=195.856395 step_acc_l2_max=865.418211 step_acc_abs_max=609.555940
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[-10735.998047, 4585.593750, -4390.242188, -473.963135, 3975.437500, -11522.183594] step_delta_abs_max=[1804.195312, 1460.101562, 1484.710938, 421.369080, 422.191406, 2332.150391] step_acc_abs_max=[500.519531, 253.351562, 241.523438, 105.550232, 80.000000, 609.556641]
+  queue_boundary: joint_dims=6 delta=[-1991.148438, 865.007812, -479.335938, 91.358154, 49.093750, -1376.860840] l2=2617.093018 abs_max=1991.148438
+  chunk_handoff_dump: saved scripts/debug/chunk_handoff_dumps_async_postprocess_20hz_20step_9000/step_000002_mode_no_rtc.npz
+  queue_actions (post_transition) range: [-96366.7812, 118397.4062], shape=(44, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=14266.327617 state_to_first_abs_max=7921.539062 step_delta_l2_mean=2045.399136 step_delta_l2_max=3866.087978 step_delta_abs_max=3203.470703 step_acc_l2_mean=221.535683 step_acc_l2_max=602.442402 step_acc_abs_max=585.898438
+  queue_chunk_joint: joint_dims=6 state_to_first=[-7799.904297, 5743.562500, -5994.152344, -249.055176, 7921.539062, -3310.349609] step_delta_abs_max=[1960.185547, 1460.101562, 1484.710938, 544.609375, 422.191406, 3203.470703] step_acc_abs_max=[195.253906, 161.250000, 205.648438, 147.780212, 137.210938, 585.898438]
+Step 3: infer time = 0.2888 seconds
+  raw_actions (normalized) range: [-1.0026, 0.7589], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.027427 step_delta_l2_max=0.058263 step_delta_abs_max=0.035586 step_acc_l2_mean=0.007757 step_acc_l2_max=0.018704 step_acc_abs_max=0.013178
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.032731, 0.029984, 0.035586, 0.015573, 0.024916, 0.021158] step_acc_abs_max=[0.006360, 0.007809, 0.013178, 0.009371, 0.006099, 0.008516]
+  policy_actions (denormalized, pre_postprocess) range: [-97474.2083, 121039.6976], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=367.415188 state_to_first_abs_max=276.959800 step_delta_l2_mean=1247.830990 step_delta_l2_max=2756.910483 step_delta_abs_max=1634.833204 step_acc_l2_mean=349.360261 step_acc_l2_max=832.581923 step_acc_abs_max=604.963926
+  policy_chunk_joint: joint_dims=6 state_to_first=[66.582031, -276.960938, 112.226562, -18.476135, -94.757812, 178.714844] step_delta_abs_max=[1123.992188, 1634.835938, 1633.710938, 351.298950, 856.343750, 1374.367188] step_acc_abs_max=[218.421875, 425.796875, 604.968750, 211.395752, 209.632812, 553.160156]
+  worker_actions (postprocess) range: [-97282.8266, 120664.4086], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=367.415188 state_to_first_abs_max=276.959800 step_delta_l2_mean=1206.095151 step_delta_l2_max=2571.160677 step_delta_abs_max=1618.113207 step_acc_l2_mean=189.261226 step_acc_l2_max=522.082187 step_acc_abs_max=336.420268
+  worker_chunk_joint: joint_dims=6 state_to_first=[66.582031, -276.960938, 112.226562, -18.476135, -94.757812, 178.714844] step_delta_abs_max=[972.316406, 1551.421875, 1618.117188, 297.128662, 772.335938, 1164.199219] step_acc_abs_max=[217.328125, 300.117188, 336.421875, 91.305420, 125.398438, 267.984375]
+  main_actions (aligned_from_worker) range: [-97282.8266, 120664.4086], shape=(43, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=14809.112746 state_to_first_abs_max=8802.053166 step_delta_l2_mean=1046.204481 step_delta_l2_max=2571.160677 step_delta_abs_max=1618.113207 step_acc_l2_mean=182.465872 step_acc_l2_max=355.054449 step_acc_abs_max=227.200850
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[-5787.496094, 8778.234375, -8802.054688, -143.445801, 240.531250, -5585.945312] step_delta_abs_max=[738.371094, 1528.750000, 1618.117188, 297.128662, 772.335938, 1164.199219] step_acc_abs_max=[133.898438, 206.500000, 227.195312, 91.305420, 125.398438, 200.675781]
+  main_actions (post_main_postprocess) range: [-97151.1938, 120362.3372], shape=(43, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=14809.112746 state_to_first_abs_max=8802.053166 step_delta_l2_mean=1018.524073 step_delta_l2_max=2395.217816 step_delta_abs_max=1566.311103 step_acc_l2_mean=145.961657 step_acc_l2_max=659.369281 step_acc_abs_max=408.428089
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[-5787.496094, 8778.234375, -8802.054688, -143.445801, 240.531250, -5585.945312] step_delta_abs_max=[512.765625, 1423.531250, 1566.312500, 264.636108, 734.863281, 1079.089844] step_acc_abs_max=[131.949219, 382.523438, 408.437500, 48.441956, 88.324219, 318.617188]
+  queue_boundary: joint_dims=6 delta=[-834.617188, 1405.234375, -1409.023438, -281.088257, -12.968750, -1156.648438] l2=2464.473877 abs_max=1409.023438
+  chunk_handoff_dump: saved scripts/debug/chunk_handoff_dumps_async_postprocess_20hz_20step_9000/step_000003_mode_no_rtc.npz
+  queue_actions (post_transition) range: [-97078.6016, 120362.3359], shape=(43, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=21632.215712 state_to_first_abs_max=12084.781250 step_delta_l2_mean=883.594646 step_delta_l2_max=2423.710579 step_delta_abs_max=1422.343750 step_acc_l2_mean=124.237954 step_acc_l2_max=440.092621 step_acc_abs_max=324.726562
+  queue_chunk_joint: joint_dims=6 state_to_first=[-9392.390625, 11745.023438, -12084.781250, -1297.566772, 13.203125, -9698.679688] step_delta_abs_max=[755.062500, 1402.828125, 1422.343750, 289.042480, 734.863281, 1108.738281] step_acc_abs_max=[233.500000, 147.007812, 122.062500, 87.066162, 88.324219, 324.726562]
+Step 4: infer time = 0.2532 seconds
+  raw_actions (normalized) range: [-0.3429, 0.8176], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.014174 step_delta_l2_max=0.036683 step_delta_abs_max=0.032341 step_acc_l2_mean=0.007507 step_acc_l2_max=0.023096 step_acc_abs_max=0.018559
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.011865, 0.013807, 0.016860, 0.014690, 0.032341, 0.005247] step_acc_abs_max=[0.011463, 0.008104, 0.011174, 0.008231, 0.018559, 0.006326]
+  policy_actions (denormalized, pre_postprocess) range: [-97811.8944, 128721.7715], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=176.430950 state_to_first_abs_max=103.270145 step_delta_l2_mean=570.213996 step_delta_l2_max=1363.732061 step_delta_abs_max=1111.538793 step_acc_l2_mean=306.109335 step_acc_l2_max=880.522302 step_acc_abs_max=637.867364
+  policy_chunk_joint: joint_dims=6 state_to_first=[50.914062, -97.382812, 76.578125, -26.756104, -103.273438, 42.507812] step_delta_abs_max=[407.445312, 752.781250, 774.031250, 331.390869, 1111.539062, 340.847656] step_acc_abs_max=[393.660156, 441.882812, 512.960938, 185.679932, 637.867188, 410.914062]
+  worker_actions (postprocess) range: [-97735.2546, 128332.1039], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=176.430950 state_to_first_abs_max=103.270145 step_delta_l2_mean=533.180951 step_delta_l2_max=1185.155917 step_delta_abs_max=985.780291 step_acc_l2_mean=132.201988 step_acc_l2_max=402.915086 step_acc_abs_max=294.568325
+  worker_chunk_joint: joint_dims=6 state_to_first=[50.914062, -97.382812, 76.578125, -26.756104, -103.273438, 42.507812] step_delta_abs_max=[357.632812, 541.265625, 652.812500, 272.457031, 985.777344, 278.296875] step_acc_abs_max=[144.437500, 164.875000, 232.796875, 112.796631, 294.562500, 151.425781]
+  main_actions (aligned_from_worker) range: [-97735.2546, 128332.1039], shape=(44, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=3187.581889 state_to_first_abs_max=2310.158413 step_delta_l2_mean=529.380963 step_delta_l2_max=1185.155917 step_delta_abs_max=985.780291 step_acc_l2_mean=127.038250 step_acc_l2_max=402.915086 step_acc_abs_max=294.568325
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[726.945312, 2310.156250, -1652.609375, -9.698486, -485.539062, -1152.578125] step_delta_abs_max=[357.632812, 431.156250, 652.812500, 272.457031, 985.777344, 137.964844] step_acc_abs_max=[116.320312, 126.398438, 232.796875, 112.796631, 294.562500, 148.496094]
+  main_actions (post_main_postprocess) range: [-97706.2301, 127948.3421], shape=(44, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=3187.581889 state_to_first_abs_max=2310.158413 step_delta_l2_mean=511.255622 step_delta_l2_max=1048.059446 step_delta_abs_max=884.228738 step_acc_l2_mean=81.086190 step_acc_l2_max=219.546002 step_acc_abs_max=154.372393
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[726.945312, 2310.156250, -1652.609375, -9.698486, -485.539062, -1152.578125] step_delta_abs_max=[324.093750, 404.875000, 557.929688, 232.195068, 884.230469, 94.359375] step_acc_abs_max=[79.671875, 61.843750, 142.398438, 82.847656, 154.371094, 51.226562]
+  queue_boundary: joint_dims=6 delta=[194.910156, 134.773438, -56.148438, -36.192627, -152.351562, -228.257812] l2=368.685547 abs_max=228.257812
+  chunk_handoff_dump: saved scripts/debug/chunk_handoff_dumps_async_postprocess_20hz_20step_9000/step_000004_mode_no_rtc.npz
+  queue_actions (post_transition) range: [-97075.2734, 127948.3438], shape=(44, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=4148.188246 state_to_first_abs_max=2363.273438 step_delta_l2_mean=475.067037 step_delta_l2_max=846.451870 step_delta_abs_max=729.121094 step_acc_l2_mean=76.625804 step_acc_l2_max=228.826142 step_acc_abs_max=163.792969
+  queue_chunk_joint: joint_dims=6 state_to_first=[1667.718750, 2295.726562, -2363.273438, -181.176270, -626.492188, -1773.539062] step_delta_abs_max=[171.859375, 404.875000, 419.312500, 167.964355, 729.121094, 259.812500] step_acc_abs_max=[54.828125, 61.843750, 144.109375, 52.514648, 163.792969, 116.398438]
+Step 5: infer time = 0.2474 seconds
+  raw_actions (normalized) range: [-0.2411, 0.8087], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.009514 step_delta_l2_max=0.016088 step_delta_abs_max=0.013113 step_acc_l2_mean=0.005683 step_acc_l2_max=0.014640 step_acc_abs_max=0.012393
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.005796, 0.008853, 0.004730, 0.007746, 0.013113, 0.004621] step_acc_abs_max=[0.008494, 0.004919, 0.006750, 0.007097, 0.012393, 0.005194]
+  policy_actions (denormalized, pre_postprocess) range: [-96231.0410, 130942.4534], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=340.141651 state_to_first_abs_max=223.913760 step_delta_l2_mean=396.583218 step_delta_l2_max=619.984681 step_delta_abs_max=482.718586 step_acc_l2_mean=234.825110 step_acc_l2_max=538.590508 step_acc_abs_max=425.946198
+  policy_chunk_joint: joint_dims=6 state_to_first=[12.835938, 202.070312, 70.960938, -81.454102, -223.914062, -113.546875] step_delta_abs_max=[199.042969, 482.718750, 217.132812, 174.740234, 450.691406, 300.175781] step_acc_abs_max=[291.667969, 268.203125, 309.867188, 160.097656, 425.953125, 337.410156]
+  worker_actions (postprocess) range: [-96231.0410, 130869.2512], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=340.141651 state_to_first_abs_max=223.913760 step_delta_l2_mean=366.973026 step_delta_l2_max=557.196189 step_delta_abs_max=402.758286 step_acc_l2_mean=98.757418 step_acc_l2_max=192.275609 step_acc_abs_max=143.908689
+  worker_chunk_joint: joint_dims=6 state_to_first=[12.835938, 202.070312, 70.960938, -81.454102, -223.914062, -113.546875] step_delta_abs_max=[108.796875, 396.203125, 186.492188, 136.677734, 402.757812, 203.957031] step_acc_abs_max=[100.714844, 121.898438, 115.734375, 59.333008, 143.906250, 143.832031]
+  main_actions (aligned_from_worker) range: [-95712.6291, 130869.2512], shape=(44, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=2321.020625 state_to_first_abs_max=1622.976807 step_delta_l2_mean=370.195522 step_delta_l2_max=557.196189 step_delta_abs_max=402.758286 step_acc_l2_mean=96.683348 step_acc_l2_max=192.275609 step_acc_abs_max=143.908689
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[197.101562, 1622.976562, 589.367188, -290.243652, -1485.351562, 276.335938] step_delta_abs_max=[108.796875, 396.203125, 186.492188, 136.677734, 402.757812, 203.957031] step_acc_abs_max=[100.714844, 121.898438, 115.734375, 59.333008, 143.906250, 121.359375]
+  main_actions (post_main_postprocess) range: [-95712.6291, 130843.1625], shape=(44, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=2321.020625 state_to_first_abs_max=1622.976807 step_delta_l2_mean=355.784411 step_delta_l2_max=528.102800 step_delta_abs_max=390.535244 step_acc_l2_mean=54.419258 step_acc_l2_max=116.520924 step_acc_abs_max=87.746863
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[197.101562, 1622.976562, 589.367188, -290.243652, -1485.351562, 276.335938] step_delta_abs_max=[65.753906, 355.609375, 174.960938, 122.442871, 390.535156, 161.324219] step_acc_abs_max=[43.039062, 73.992188, 63.023438, 31.616211, 87.746094, 61.972656]
+  queue_boundary: joint_dims=6 delta=[7.722656, 136.031250, 301.484375, -42.213379, -591.343750, 45.437500] l2=680.434387 abs_max=591.343750
+  chunk_handoff_dump: saved scripts/debug/chunk_handoff_dumps_async_postprocess_20hz_20step_9000/step_000005_mode_no_rtc.npz
+  queue_actions (post_transition) range: [-96129.1719, 130843.1641], shape=(44, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=2998.939149 state_to_first_abs_max=2265.023438 step_delta_l2_mean=362.991800 step_delta_l2_max=827.692779 step_delta_abs_max=708.117188 step_acc_l2_mean=61.687158 step_acc_l2_max=140.137951 step_acc_abs_max=108.312500
+  queue_chunk_joint: joint_dims=6 state_to_first=[510.832031, 1746.750000, 172.828125, -584.480469, -2265.023438, 423.949219] step_delta_abs_max=[65.753906, 354.078125, 418.187500, 110.830566, 708.117188, 161.324219] step_acc_abs_max=[43.039062, 73.992188, 65.054688, 24.348633, 108.312500, 61.972656]
+Step 6: infer time = 0.2945 seconds
+  raw_actions (normalized) range: [-0.2042, 0.7932], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.013404 step_delta_l2_max=0.046608 step_delta_abs_max=0.040881 step_acc_l2_mean=0.005339 step_acc_l2_max=0.010425 step_acc_abs_max=0.007841
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.003184, 0.027759, 0.008482, 0.004548, 0.040881, 0.004008] step_acc_abs_max=[0.004907, 0.007841, 0.005484, 0.006067, 0.007739, 0.005067]
+  policy_actions (denormalized, pre_postprocess) range: [-94181.5667, 131011.2210], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=496.817860 state_to_first_abs_max=412.512104 step_delta_l2_mean=571.834881 step_delta_l2_max=1963.078755 step_delta_abs_max=1513.490590 step_acc_l2_mean=244.153789 step_acc_l2_max=502.704718 step_acc_abs_max=427.513514
+  policy_chunk_joint: joint_dims=6 state_to_first=[3.796875, 256.765625, 95.335938, -32.973633, -412.511719, 23.339844] step_delta_abs_max=[109.347656, 1513.492188, 389.414062, 102.597656, 1405.054688, 260.351562] step_acc_abs_max=[168.492188, 427.523438, 251.781250, 136.868164, 265.996094, 329.156250]
+  worker_actions (postprocess) range: [-93850.9953, 130905.9915], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=496.817860 state_to_first_abs_max=412.512104 step_delta_l2_mean=504.490160 step_delta_l2_max=1820.577305 step_delta_abs_max=1386.588036 step_acc_l2_mean=118.915485 step_acc_l2_max=339.509208 step_acc_abs_max=299.718891
+  worker_chunk_joint: joint_dims=6 state_to_first=[3.796875, 256.765625, 95.335938, -32.973633, -412.511719, 23.339844] step_delta_abs_max=[48.859375, 1386.593750, 330.570312, 61.246094, 1318.359375, 194.687500] step_acc_abs_max=[66.394531, 299.718750, 114.343750, 68.077637, 149.027344, 124.582031]
+  main_actions (aligned_from_worker) range: [-93850.9953, 130905.9915], shape=(43, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=2737.164383 state_to_first_abs_max=2065.356169 step_delta_l2_mean=533.426789 step_delta_l2_max=1820.577305 step_delta_abs_max=1386.588036 step_acc_l2_mean=122.496005 step_acc_l2_max=339.509208 step_acc_abs_max=299.718891
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[44.253906, 1707.093750, 547.820312, -2.907715, -2065.355469, 100.601562] step_delta_abs_max=[48.859375, 1386.593750, 330.570312, 61.246094, 1318.359375, 194.687500] step_acc_abs_max=[66.394531, 299.718750, 114.343750, 68.077637, 149.027344, 124.582031]
+  main_actions (post_main_postprocess) range: [-93585.9910, 130872.5417], shape=(43, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=2737.164383 state_to_first_abs_max=2065.356169 step_delta_l2_mean=481.553570 step_delta_l2_max=1764.705020 step_delta_abs_max=1282.013824 step_acc_l2_mean=83.301102 step_acc_l2_max=243.642988 step_acc_abs_max=208.126765
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[44.253906, 1707.093750, 547.820312, -2.907715, -2065.355469, 100.601562] step_delta_abs_max=[40.312500, 1282.015625, 265.007812, 50.774414, 1240.410156, 169.515625] step_acc_abs_max=[25.230469, 208.125000, 72.304688, 38.342773, 124.429688, 47.812500]
+  queue_boundary: joint_dims=6 delta=[-6.277344, 316.109375, 30.710938, 78.464844, -200.488281, 50.671875] l2=387.075745 abs_max=316.109375
+  chunk_handoff_dump: saved scripts/debug/chunk_handoff_dumps_async_postprocess_20hz_20step_9000/step_000006_mode_no_rtc.npz
+  queue_actions (post_transition) range: [-93585.9922, 130868.2500], shape=(43, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=3441.965161 state_to_first_abs_max=2667.312500 step_delta_l2_mean=469.457534 step_delta_l2_max=1764.709277 step_delta_abs_max=1282.015625 step_acc_l2_mean=81.256294 step_acc_l2_max=243.641699 step_acc_abs_max=208.125000
+  queue_chunk_joint: joint_dims=6 state_to_first=[-60.097656, 2667.312500, 395.398438, 769.596924, -1857.988281, 726.785156] step_delta_abs_max=[40.312500, 1282.015625, 265.007812, 57.348145, 1240.410156, 169.515625] step_acc_abs_max=[23.527344, 208.125000, 72.304688, 38.342773, 124.429688, 45.648438]
+Step 7: infer time = 0.2714 seconds
+  raw_actions (normalized) range: [-0.6549, 0.7613], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.026154 step_delta_l2_max=0.059316 step_delta_abs_max=0.039439 step_acc_l2_mean=0.006434 step_acc_l2_max=0.018313 step_acc_abs_max=0.013792
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.033445, 0.025739, 0.028376, 0.011139, 0.034500, 0.039439] step_acc_abs_max=[0.006538, 0.008518, 0.007870, 0.004633, 0.013792, 0.009074]
+  policy_actions (denormalized, pre_postprocess) range: [-93365.6135, 130397.4086], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=377.764795 state_to_first_abs_max=343.229909 step_delta_l2_mean=1249.586432 step_delta_l2_max=3268.698350 step_delta_abs_max=2561.871616 step_acc_l2_mean=285.789200 step_acc_l2_max=851.572269 step_acc_abs_max=589.425801
+  policy_chunk_joint: joint_dims=6 state_to_first=[-1.023438, 141.000000, 59.148438, -33.282715, -343.230469, -20.265625] step_delta_abs_max=[1148.488281, 1403.367188, 1302.703125, 251.285400, 1185.734375, 2561.867188] step_acc_abs_max=[224.511719, 464.437500, 361.289062, 104.520996, 474.000000, 589.421875]
+  worker_actions (postprocess) range: [-93327.2429, 130354.1914], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=377.764795 state_to_first_abs_max=343.229909 step_delta_l2_mean=1164.313012 step_delta_l2_max=3084.126665 step_delta_abs_max=2423.592284 step_acc_l2_mean=162.909578 step_acc_l2_max=425.192146 step_acc_abs_max=362.312384
+  worker_chunk_joint: joint_dims=6 state_to_first=[-1.023438, 141.000000, 59.148438, -33.282715, -343.230469, -20.265625] step_delta_abs_max=[1104.042969, 1340.187500, 1213.257812, 182.544434, 1143.648438, 2423.585938] step_acc_abs_max=[150.042969, 257.875000, 211.773438, 72.106445, 204.117188, 362.312500]
+  main_actions (aligned_from_worker) range: [-93327.2429, 130354.1914], shape=(43, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=1374.557294 state_to_first_abs_max=1106.414606 step_delta_l2_mean=1330.331936 step_delta_l2_max=3084.126665 step_delta_abs_max=2423.592284 step_acc_l2_mean=176.357621 step_acc_l2_max=425.192146 step_acc_abs_max=362.312384
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[-86.425781, 788.164062, 184.648438, -49.878662, -1106.414062, 0.960938] step_delta_abs_max=[1104.042969, 1340.187500, 1213.257812, 182.544434, 1143.648438, 2423.585938] step_acc_abs_max=[150.042969, 257.875000, 211.773438, 72.106445, 204.117188, 362.312500]
+  main_actions (post_main_postprocess) range: [-93292.5597, 130349.0348], shape=(43, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=1374.557294 state_to_first_abs_max=1106.414606 step_delta_l2_mean=1250.839506 step_delta_l2_max=2914.068723 step_delta_abs_max=2266.431636 step_acc_l2_mean=140.523570 step_acc_l2_max=297.361120 step_acc_abs_max=235.001005
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[-86.425781, 788.164062, 184.648438, -49.878662, -1106.414062, 0.960938] step_delta_abs_max=[1044.617188, 1301.992188, 1129.453125, 165.021240, 1095.468750, 2266.429688] step_acc_abs_max=[121.050781, 179.921875, 165.625000, 61.320312, 137.171875, 234.992188]
+  queue_boundary: joint_dims=6 delta=[3.136719, 26.171875, 29.679688, 3.103516, -141.800781, -49.691406] l2=155.441376 abs_max=141.800781
+  chunk_handoff_dump: saved scripts/debug/chunk_handoff_dumps_async_postprocess_20hz_20step_9000/step_000007_mode_no_rtc.npz
+  queue_actions (post_transition) range: [-93292.5625, 130865.5625], shape=(43, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=1855.240454 state_to_first_abs_max=1316.562500 step_delta_l2_mean=1267.313139 step_delta_l2_max=2914.067199 step_delta_abs_max=2266.429688 step_acc_l2_mean=145.614398 step_acc_l2_max=297.351817 step_acc_abs_max=234.992188
+  queue_chunk_joint: joint_dims=6 state_to_first=[150.191406, 1316.562500, 244.507812, -308.540039, -1236.554688, -44.433594] step_delta_abs_max=[1044.617188, 1366.210938, 1129.453125, 165.021240, 1124.113281, 2266.429688] step_acc_abs_max=[121.050781, 214.203125, 165.625000, 61.320312, 131.550781, 234.992188]
+Step 8: infer time = 0.2513 seconds
+  raw_actions (normalized) range: [-1.0924, 0.8280], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.039451 step_delta_l2_max=0.058486 step_delta_abs_max=0.040547 step_acc_l2_mean=0.007396 step_acc_l2_max=0.014991 step_acc_abs_max=0.010049
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.035909, 0.026555, 0.034581, 0.012211, 0.036828, 0.040547] step_acc_abs_max=[0.010049, 0.007405, 0.007656, 0.009023, 0.009431, 0.007362]
+  policy_actions (denormalized, pre_postprocess) range: [-113323.2573, 129855.3446], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=173.730120 state_to_first_abs_max=120.655382 step_delta_l2_mean=1957.397180 step_delta_l2_max=3182.119413 step_delta_abs_max=2633.789168 step_acc_l2_mean=327.435552 step_acc_l2_max=623.254793 step_acc_abs_max=478.213970
+  policy_chunk_joint: joint_dims=6 state_to_first=[-23.285156, -120.656250, 90.992188, 29.402100, -53.375000, 55.582031] step_delta_abs_max=[1233.117188, 1447.882812, 1587.546875, 275.471924, 1265.753906, 2633.789062] step_acc_abs_max=[345.062500, 403.757812, 351.500000, 203.543945, 324.148438, 478.210938]
+  worker_actions (postprocess) range: [-112310.1808, 129855.3446], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=173.730120 state_to_first_abs_max=120.655382 step_delta_l2_mean=1917.845866 step_delta_l2_max=3101.646357 step_delta_abs_max=2574.258867 step_acc_l2_mean=196.676805 step_acc_l2_max=382.006857 step_acc_abs_max=281.062617
+  worker_chunk_joint: joint_dims=6 state_to_first=[-23.285156, -120.656250, 90.992188, 29.402100, -53.375000, 55.582031] step_delta_abs_max=[1105.589844, 1353.742188, 1488.242188, 207.119385, 1170.195312, 2574.257812] step_acc_abs_max=[159.003906, 281.062500, 248.671875, 94.760742, 224.093750, 236.000000]
+  main_actions (aligned_from_worker) range: [-112310.1808, 124703.2068], shape=(44, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=6161.416591 state_to_first_abs_max=5272.793185 step_delta_l2_mean=2043.660477 step_delta_l2_max=3101.646357 step_delta_abs_max=2574.258867 step_acc_l2_mean=195.354376 step_acc_l2_max=382.006857 step_acc_abs_max=248.667713
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[-24.515625, -5272.796875, -111.687500, 445.753174, 3128.253906, -403.695312] step_delta_abs_max=[1105.589844, 1353.742188, 1488.242188, 207.119385, 1170.195312, 2574.257812] step_acc_abs_max=[159.003906, 234.679688, 248.671875, 94.760742, 224.093750, 236.000000]
+  main_actions (post_main_postprocess) range: [-111324.1021, 124703.2068], shape=(44, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=6161.416591 state_to_first_abs_max=5272.793185 step_delta_l2_mean=2002.078090 step_delta_l2_max=3012.073096 step_delta_abs_max=2504.744990 step_acc_l2_mean=170.731962 step_acc_l2_max=453.068240 step_acc_abs_max=357.682526
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[-24.515625, -5272.796875, -111.687500, 445.753174, 3128.253906, -403.695312] step_delta_abs_max=[1070.394531, 1232.632812, 1424.070312, 172.645752, 1046.761719, 2504.742188] step_acc_abs_max=[126.035156, 357.687500, 186.398438, 60.098145, 267.292969, 199.750000]
+  queue_boundary: joint_dims=6 delta=[19.632812, -1356.671875, -42.742188, 63.799072, 1050.503906, -177.207031] l2=1726.789551 abs_max=1356.671875
+  chunk_handoff_dump: saved scripts/debug/chunk_handoff_dumps_async_postprocess_20hz_20step_9000/step_000008_mode_no_rtc.npz
+  queue_actions (post_transition) range: [-111324.1016, 122671.3594], shape=(44, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=9267.343342 state_to_first_abs_max=7304.640625 step_delta_l2_mean=1937.253497 step_delta_l2_max=3012.078087 step_delta_abs_max=2504.742188 step_acc_l2_mean=151.366268 step_acc_l2_max=306.620427 step_acc_abs_max=202.523438
+  queue_chunk_joint: joint_dims=6 state_to_first=[-49.980469, -7304.640625, -263.054688, 622.950928, 5626.847656, -636.160156] step_delta_abs_max=[1030.093750, 1320.421875, 1424.070312, 172.645752, 1071.503906, 2504.742188] step_acc_abs_max=[114.820312, 111.648438, 191.867188, 63.982910, 176.445312, 202.523438]
+Step 9: infer time = 0.2478 seconds
+  raw_actions (normalized) range: [-1.0255, 0.7599], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.035199 step_delta_l2_max=0.051683 step_delta_abs_max=0.034657 step_acc_l2_mean=0.007646 step_acc_l2_max=0.016423 step_acc_abs_max=0.012077
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.029791, 0.019403, 0.029785, 0.008302, 0.032986, 0.034657] step_acc_abs_max=[0.008582, 0.007361, 0.009137, 0.007900, 0.007909, 0.012077]
+  policy_actions (denormalized, pre_postprocess) range: [-116955.6639, 110003.0310], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=367.476140 state_to_first_abs_max=281.206548 step_delta_l2_mean=1711.590740 step_delta_l2_max=2811.459419 step_delta_abs_max=2251.211023 step_acc_l2_mean=345.211477 step_acc_l2_max=912.365673 step_acc_abs_max=784.491755
+  policy_chunk_joint: joint_dims=6 state_to_first=[8.359375, -149.968750, 136.195312, 4.389893, -121.781250, 281.207031] step_delta_abs_max=[1023.035156, 1057.898438, 1367.375000, 187.282715, 1133.695312, 2251.210938] step_acc_abs_max=[294.722656, 401.351562, 419.476562, 178.222900, 271.804688, 784.492188]
+  worker_actions (postprocess) range: [-116869.8285, 110003.0310], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=367.476140 state_to_first_abs_max=281.206548 step_delta_l2_mean=1689.117050 step_delta_l2_max=2712.682359 step_delta_abs_max=2146.161933 step_acc_l2_mean=182.652451 step_acc_l2_max=474.518472 step_acc_abs_max=382.000288
+  worker_chunk_joint: joint_dims=6 state_to_first=[8.359375, -149.968750, 136.195312, 4.389893, -121.781250, 281.207031] step_delta_abs_max=[968.000000, 1003.132812, 1241.648438, 136.803955, 1015.550781, 2146.164062] step_acc_abs_max=[202.542969, 180.835938, 204.187500, 91.376709, 176.187500, 381.996094]
+  main_actions (aligned_from_worker) range: [-116869.8285, 106207.1026], shape=(44, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=8717.697401 state_to_first_abs_max=6761.698116 step_delta_l2_mean=1717.256623 step_delta_l2_max=2712.682359 step_delta_abs_max=2146.161933 step_acc_l2_mean=175.111972 step_acc_l2_max=406.651511 step_acc_abs_max=309.961821
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[3489.371094, -3945.898438, 1046.109375, -591.333496, 1043.000000, -6761.695312] step_delta_abs_max=[968.000000, 1003.132812, 1241.648438, 110.949951, 1015.550781, 2146.164062] step_acc_abs_max=[161.550781, 180.835938, 204.187500, 66.143066, 176.187500, 309.968750]
+  main_actions (post_main_postprocess) range: [-116807.4944, 106207.1026], shape=(44, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=8717.697401 state_to_first_abs_max=6761.698116 step_delta_l2_mean=1698.907508 step_delta_l2_max=2654.772691 step_delta_abs_max=2118.425244 step_acc_l2_mean=142.813454 step_acc_l2_max=564.218646 step_acc_abs_max=448.389965
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[3489.371094, -3945.898438, 1046.109375, -591.333496, 1043.000000, -6761.695312] step_delta_abs_max=[930.464844, 955.726562, 1216.953125, 91.490723, 959.925781, 2118.421875] step_acc_abs_max=[240.968750, 199.000000, 156.320312, 34.796387, 144.609375, 448.390625]
+  queue_boundary: joint_dims=6 delta=[948.128906, -753.929688, 341.781250, -68.028809, 60.953125, -1429.773438] l2=1907.031250 abs_max=1429.773438
+  chunk_handoff_dump: saved scripts/debug/chunk_handoff_dumps_async_postprocess_20hz_20step_9000/step_000009_mode_no_rtc.npz
+  queue_actions (post_transition) range: [-116807.4922, 104728.9453], shape=(44, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=11710.470859 state_to_first_abs_max=8718.687500 step_delta_l2_mean=1635.068759 step_delta_l2_max=2539.218035 step_delta_abs_max=2128.000000 step_acc_l2_mean=125.924673 step_acc_l2_max=258.492124 step_acc_abs_max=212.625000
+  queue_chunk_joint: joint_dims=6 state_to_first=[5343.570312, -5424.054688, 1366.210938, -741.755859, 853.679688, -8718.687500] step_delta_abs_max=[961.957031, 874.250000, 1077.500000, 146.715576, 959.925781, 2128.000000] step_acc_abs_max=[120.425781, 81.828125, 168.906250, 55.134033, 174.343750, 212.625000]
+Step 10: infer time = 0.2856 seconds
+  raw_actions (normalized) range: [-0.7049, 0.4157], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.026637 step_delta_l2_max=0.046106 step_delta_abs_max=0.030764 step_acc_l2_mean=0.005900 step_acc_l2_max=0.010228 step_acc_abs_max=0.007520
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.022418, 0.016193, 0.030764, 0.008933, 0.029686, 0.028384] step_acc_abs_max=[0.004118, 0.006438, 0.006620, 0.003483, 0.007520, 0.007306]
+  policy_actions (denormalized, pre_postprocess) range: [-118568.7127, 95235.0517], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=235.168799 state_to_first_abs_max=132.548798 step_delta_l2_mean=1178.555577 step_delta_l2_max=2446.922884 step_delta_abs_max=1843.749211 step_acc_l2_mean=270.486432 step_acc_l2_max=517.375963 step_acc_abs_max=474.566792
+  policy_chunk_joint: joint_dims=6 state_to_first=[52.714844, -46.351562, 132.546875, -25.938721, -121.078125, 132.187500] step_delta_abs_max=[769.828125, 882.882812, 1412.312500, 201.522217, 1020.277344, 1843.742188] step_acc_abs_max=[141.406250, 351.031250, 303.921875, 78.572266, 258.460938, 474.554688]
+  worker_actions (postprocess) range: [-118477.4674, 95002.6490], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=235.168799 state_to_first_abs_max=132.548798 step_delta_l2_mean=1150.577798 step_delta_l2_max=2152.807464 step_delta_abs_max=1608.116386 step_acc_l2_mean=150.146974 step_acc_l2_max=499.391487 step_acc_abs_max=325.693588
+  worker_chunk_joint: joint_dims=6 state_to_first=[52.714844, -46.351562, 132.546875, -25.938721, -121.078125, 132.187500] step_delta_abs_max=[545.462891, 670.484375, 1244.023438, 146.561279, 949.578125, 1608.109375] step_acc_abs_max=[143.996094, 212.406250, 310.265625, 54.960938, 193.187500, 325.703125]
+  main_actions (aligned_from_worker) range: [-118477.4674, 94636.7728], shape=(43, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=12831.388646 state_to_first_abs_max=9338.193683 step_delta_l2_mean=1035.308335 step_delta_l2_max=1936.944099 step_delta_abs_max=1248.527977 step_acc_l2_mean=132.843122 step_acc_l2_max=268.425820 step_acc_abs_max=212.403233
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[3367.494141, -3333.007812, 7283.625000, 781.627930, -1153.937500, -9338.195312] step_delta_abs_max=[419.791016, 670.484375, 1155.078125, 109.278076, 949.578125, 1248.523438] step_acc_abs_max=[82.779297, 212.406250, 186.671875, 38.764160, 193.187500, 186.320312]
+  main_actions (post_main_postprocess) range: [-118406.0933, 94048.0249], shape=(43, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=12831.388646 state_to_first_abs_max=9338.193683 step_delta_l2_mean=1012.871731 step_delta_l2_max=1663.562328 step_delta_abs_max=1096.147463 step_acc_l2_mean=96.203732 step_acc_l2_max=468.377620 step_acc_abs_max=283.168097
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[3367.494141, -3333.007812, 7283.625000, 781.627930, -1153.937500, -9338.195312] step_delta_abs_max=[409.759766, 588.750000, 985.820312, 72.345459, 851.417969, 1096.148438] step_acc_abs_max=[92.230469, 134.164062, 283.171875, 23.057739, 255.070312, 245.859375]
+  queue_boundary: joint_dims=6 delta=[363.160156, -337.000000, 886.703125, 61.331299, -150.875000, -1420.648438] l2=1753.984985 abs_max=1420.648438
+  chunk_handoff_dump: saved scripts/debug/chunk_handoff_dumps_async_postprocess_20hz_20step_9000/step_000010_mode_no_rtc.npz
+  queue_actions (post_transition) range: [-118406.0938, 94048.0234], shape=(43, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=15331.953561 state_to_first_abs_max=11975.531250 step_delta_l2_mean=986.636740 step_delta_l2_max=1657.613989 step_delta_abs_max=1327.398438 step_acc_l2_mean=85.651129 step_acc_l2_max=230.810311 step_acc_abs_max=191.656250
+  queue_chunk_joint: joint_dims=6 state_to_first=[3413.658203, -3434.585938, 8254.703125, 193.643311, -168.484375, -11975.531250] step_delta_abs_max=[343.281250, 588.750000, 843.085938, 95.225342, 914.070312, 1327.398438] step_acc_abs_max=[37.416016, 134.164062, 85.687500, 23.057739, 191.656250, 169.820312]
+Step 11: infer time = 0.2539 seconds
+  raw_actions (normalized) range: [-0.5091, 0.2093], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.015740 step_delta_l2_max=0.028794 step_delta_abs_max=0.022818 step_acc_l2_mean=0.004088 step_acc_l2_max=0.008265 step_acc_abs_max=0.006313
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.007335, 0.011576, 0.014833, 0.006110, 0.022818, 0.009714] step_acc_abs_max=[0.002604, 0.003648, 0.005238, 0.004638, 0.006313, 0.002829]
+  policy_actions (denormalized, pre_postprocess) range: [-116785.9270, 102717.9227], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=364.515208 state_to_first_abs_max=239.715338 step_delta_l2_mean=642.165599 step_delta_l2_max=1195.235403 step_delta_abs_max=784.220367 step_acc_l2_mean=172.066463 step_acc_l2_max=341.324237 step_acc_abs_max=240.484407
+  policy_chunk_joint: joint_dims=6 state_to_first=[27.925781, -125.890625, 239.714844, 13.213135, -156.164062, 184.976562] step_delta_abs_max=[251.875000, 631.164062, 680.968750, 137.834106, 784.222656, 631.007812] step_acc_abs_max=[89.404297, 198.890625, 240.484375, 104.625244, 216.964844, 183.789062]
+  worker_actions (postprocess) range: [-116715.5922, 102508.5436], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=364.515208 state_to_first_abs_max=239.715338 step_delta_l2_mean=627.490550 step_delta_l2_max=955.503015 step_delta_abs_max=698.206167 step_acc_l2_mean=83.656699 step_acc_l2_max=272.902482 step_acc_abs_max=198.907707
+  worker_chunk_joint: joint_dims=6 state_to_first=[27.925781, -125.890625, 239.714844, 13.213135, -156.164062, 184.976562] step_delta_abs_max=[170.160156, 568.593750, 618.906250, 109.375854, 698.207031, 415.984375] step_acc_abs_max=[44.222656, 107.093750, 149.406250, 50.548462, 198.906250, 100.484375]
+  main_actions (aligned_from_worker) range: [-116715.5922, 102508.5436], shape=(44, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=4991.278250 state_to_first_abs_max=3585.844380 step_delta_l2_mean=602.124781 step_delta_l2_max=955.503015 step_delta_abs_max=698.206167 step_acc_l2_mean=78.797386 step_acc_l2_max=199.454600 step_acc_abs_max=128.916600
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[907.750000, 393.445312, 2877.035156, 59.596436, -3585.843750, -1671.789062] step_delta_abs_max=[102.103516, 568.593750, 618.906250, 109.375854, 698.207031, 182.703125] step_acc_abs_max=[43.154297, 107.093750, 116.015625, 50.548462, 128.914062, 74.921875]
+  main_actions (post_main_postprocess) range: [-116677.0500, 102302.0771], shape=(44, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=4991.278250 state_to_first_abs_max=3585.844380 step_delta_l2_mean=593.352292 step_delta_l2_max=852.557142 step_delta_abs_max=626.829251 step_acc_l2_mean=56.961457 step_acc_l2_max=241.006810 step_acc_abs_max=171.968672
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[907.750000, 393.445312, 2877.035156, 59.596436, -3585.843750, -1671.789062] step_delta_abs_max=[76.539062, 550.820312, 547.847656, 90.110352, 626.832031, 152.468750] step_acc_abs_max=[25.562500, 78.320312, 157.210938, 40.586182, 171.964844, 54.750000]
+  queue_boundary: joint_dims=6 delta=[143.371094, -30.898438, 606.250000, 33.849609, -678.195312, -334.765625] l2=980.923889 abs_max=678.195312
+  chunk_handoff_dump: saved scripts/debug/chunk_handoff_dumps_async_postprocess_20hz_20step_9000/step_000011_mode_no_rtc.npz
+  queue_actions (post_transition) range: [-117270.0000, 102302.0781], shape=(44, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=7572.888169 state_to_first_abs_max=5518.371094 step_delta_l2_mean=558.415260 step_delta_l2_max=1016.031268 step_delta_abs_max=728.523438 step_acc_l2_mean=58.035125 step_acc_l2_max=100.126668 step_acc_abs_max=69.867188
+  queue_chunk_joint: joint_dims=6 state_to_first=[1534.357422, -260.835938, 4207.097656, 239.440674, -5518.371094, -2591.703125] step_delta_abs_max=[104.300781, 550.820312, 646.652344, 75.478882, 728.523438, 302.601562] step_acc_abs_max=[39.087891, 64.015625, 65.218750, 31.244873, 65.867188, 69.867188]
+Step 12: infer time = 0.2542 seconds
+  raw_actions (normalized) range: [-0.2383, 0.2317], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.010025 step_delta_l2_max=0.023808 step_delta_abs_max=0.021178 step_acc_l2_mean=0.003929 step_acc_l2_max=0.007380 step_acc_abs_max=0.005253
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.001753, 0.011171, 0.009920, 0.002151, 0.021178, 0.004955] step_acc_abs_max=[0.003169, 0.003876, 0.003534, 0.002428, 0.005253, 0.004504]
+  policy_actions (denormalized, pre_postprocess) range: [-117193.6732, 103478.8183], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=315.664799 state_to_first_abs_max=180.812356 step_delta_l2_mean=440.616178 step_delta_l2_max=894.507856 step_delta_abs_max=727.880955 step_acc_l2_mean=180.015451 step_acc_l2_max=315.184386 step_acc_abs_max=292.564085
+  policy_chunk_joint: joint_dims=6 state_to_first=[18.363281, -137.570312, 168.804688, 6.000854, -138.414062, 180.812500] step_delta_abs_max=[60.193359, 609.078125, 455.429688, 48.515625, 727.882812, 321.882812] step_acc_abs_max=[108.835938, 211.359375, 162.238281, 54.781372, 180.539062, 292.570312]
+  worker_actions (postprocess) range: [-117145.9603, 103448.0173], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=315.664799 state_to_first_abs_max=180.812356 step_delta_l2_mean=421.739473 step_delta_l2_max=839.325903 step_delta_abs_max=675.044831 step_acc_l2_mean=86.056571 step_acc_l2_max=216.103894 step_acc_abs_max=149.139041
+  worker_chunk_joint: joint_dims=6 state_to_first=[18.363281, -137.570312, 168.804688, 6.000854, -138.414062, 180.812500] step_delta_abs_max=[30.529297, 569.445312, 427.136719, 32.770386, 675.042969, 226.179688] step_acc_abs_max=[38.609375, 96.656250, 146.742188, 29.143066, 149.136719, 115.421875]
+  main_actions (aligned_from_worker) range: [-117145.9603, 103448.0173], shape=(44, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=3939.996929 state_to_first_abs_max=3046.829042 step_delta_l2_mean=392.548923 step_delta_l2_max=797.913572 step_delta_abs_max=633.013436 step_acc_l2_mean=81.467012 step_acc_l2_max=137.097351 step_acc_abs_max=115.419313
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[47.595703, 1034.921875, 2268.089844, -102.034912, -3046.828125, 111.500000] step_delta_abs_max=[30.529297, 569.445312, 377.031250, 31.886353, 633.015625, 226.179688] step_acc_abs_max=[38.609375, 96.656250, 84.562500, 29.143066, 76.750000, 115.421875]
+  main_actions (post_main_postprocess) range: [-117118.9817, 103414.9171], shape=(44, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=3939.996929 state_to_first_abs_max=3046.829042 step_delta_l2_mean=385.232335 step_delta_l2_max=709.625667 step_delta_abs_max=542.582571 step_acc_l2_mean=48.740766 step_acc_l2_max=176.304881 step_acc_abs_max=138.347755
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[47.595703, 1034.921875, 2268.089844, -102.034912, -3046.828125, 111.500000] step_delta_abs_max=[21.101562, 542.578125, 267.062500, 24.986938, 485.699219, 175.656250] step_acc_abs_max=[14.607422, 92.914062, 55.937500, 12.588379, 138.347656, 50.523438]
+  queue_boundary: joint_dims=6 delta=[12.873047, 495.515625, 90.746094, -34.637451, -349.796875, 67.343750] l2=618.085022 abs_max=495.515625
+  chunk_handoff_dump: saved scripts/debug/chunk_handoff_dumps_async_postprocess_20hz_20step_9000/step_000012_mode_no_rtc.npz
+  queue_actions (post_transition) range: [-116862.6719, 103414.9141], shape=(44, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=3391.358662 state_to_first_abs_max=2529.453125 step_delta_l2_mean=375.158280 step_delta_l2_max=692.994230 step_delta_abs_max=501.421875 step_acc_l2_mean=42.429139 step_acc_l2_max=82.417480 step_acc_abs_max=70.656250
+  queue_chunk_joint: joint_dims=6 state_to_first=[93.373047, 2529.453125, 863.554688, -211.930908, -1984.218750, 605.554688] step_delta_abs_max=[25.162109, 490.367188, 231.281250, 28.987061, 501.421875, 175.656250] step_acc_abs_max=[19.562500, 70.656250, 36.675781, 19.034180, 50.421875, 50.523438]
+Step 13: infer time = 0.2684 seconds
+  raw_actions (normalized) range: [-0.1750, 0.3382], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.010029 step_delta_l2_max=0.058716 step_delta_abs_max=0.049821 step_acc_l2_mean=0.004894 step_acc_l2_max=0.020103 step_acc_abs_max=0.013731
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.002925, 0.020717, 0.020304, 0.006261, 0.049821, 0.008977] step_acc_abs_max=[0.004536, 0.004346, 0.011089, 0.005954, 0.013731, 0.006111]
+  policy_actions (denormalized, pre_postprocess) range: [-116629.7281, 104708.3181], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=361.527690 state_to_first_abs_max=278.954387 step_delta_l2_mean=439.854474 step_delta_l2_max=2332.733948 step_delta_abs_max=1712.310888 step_acc_l2_mean=207.135887 step_acc_l2_max=845.037778 step_acc_abs_max=509.073898
+  policy_chunk_joint: joint_dims=6 state_to_first=[19.417969, -8.250000, 198.394531, 11.675049, -278.953125, 113.773438] step_delta_abs_max=[100.455078, 1129.554688, 932.140625, 141.233154, 1712.312500, 583.117188] step_acc_abs_max=[155.751953, 236.976562, 509.074219, 134.305908, 471.914062, 396.960938]
+  worker_actions (postprocess) range: [-116585.9755, 104686.7359], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=361.527690 state_to_first_abs_max=278.954387 step_delta_l2_mean=381.352385 step_delta_l2_max=1886.769866 step_delta_abs_max=1411.787722 step_acc_l2_mean=100.453689 step_acc_l2_max=485.828083 step_acc_abs_max=300.523166
+  worker_chunk_joint: joint_dims=6 state_to_first=[19.417969, -8.250000, 198.394531, 11.675049, -278.953125, 113.773438] step_delta_abs_max=[43.175781, 997.289062, 649.285156, 93.348633, 1411.785156, 376.421875] step_acc_abs_max=[64.728516, 187.382812, 282.851562, 50.185059, 300.519531, 206.703125]
+  main_actions (aligned_from_worker) range: [-116444.0583, 104686.7359], shape=(43, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=3207.762571 state_to_first_abs_max=2605.455061 step_delta_l2_mean=372.080376 step_delta_l2_max=1886.769866 step_delta_abs_max=1411.787722 step_acc_l2_mean=109.892387 step_acc_l2_max=485.828083 step_acc_abs_max=300.523166
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[60.558594, 2605.453125, 200.476562, 0.399780, -1847.312500, 211.945312] step_delta_abs_max=[43.175781, 997.289062, 649.285156, 93.348633, 1411.785156, 376.421875] step_acc_abs_max=[64.728516, 187.382812, 282.851562, 50.185059, 300.519531, 206.703125]
+  main_actions (post_main_postprocess) range: [-116444.0583, 104656.6400], shape=(43, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=3207.762571 state_to_first_abs_max=2605.455061 step_delta_l2_mean=328.368015 step_delta_l2_max=1577.005396 step_delta_abs_max=1189.068731 step_acc_l2_mean=73.195134 step_acc_l2_max=330.624986 step_acc_abs_max=222.718991
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[60.558594, 2605.453125, 200.476562, 0.399780, -1847.312500, 211.945312] step_delta_abs_max=[19.910156, 883.140625, 470.839844, 67.823975, 1189.070312, 264.109375] step_acc_abs_max=[25.894531, 143.085938, 178.445312, 25.525146, 222.722656, 117.929688]
+  queue_boundary: joint_dims=6 delta=[-4.281250, 352.093750, 49.472656, -4.017334, -193.742188, -23.015625] l2=405.607910 abs_max=352.093750
+  chunk_handoff_dump: saved scripts/debug/chunk_handoff_dumps_async_postprocess_20hz_20step_9000/step_000013_mode_no_rtc.npz
+  queue_actions (post_transition) range: [-116854.3047, 104578.5312], shape=(43, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=3523.037448 state_to_first_abs_max=2541.093750 step_delta_l2_mean=322.369041 step_delta_l2_max=1577.006237 step_delta_abs_max=1189.070312 step_acc_l2_mean=69.259194 step_acc_l2_max=330.627111 step_acc_abs_max=222.722656
+  queue_chunk_joint: joint_dims=6 state_to_first=[128.312500, 2541.093750, 796.363281, 81.503174, -2293.117188, -197.351562] step_delta_abs_max=[19.910156, 883.140625, 470.839844, 67.823975, 1189.070312, 264.109375] step_acc_abs_max=[23.261719, 143.085938, 178.445312, 25.525146, 222.722656, 117.929688]
+Step 14: infer time = 0.2702 seconds
+  raw_actions (normalized) range: [-0.9654, 0.9480], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.036276 step_delta_l2_max=0.089795 step_delta_abs_max=0.077835 step_acc_l2_mean=0.007354 step_acc_l2_max=0.019065 step_acc_abs_max=0.017159
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.042195, 0.021024, 0.018867, 0.018015, 0.058549, 0.077835] step_acc_abs_max=[0.006888, 0.006727, 0.008774, 0.017159, 0.013441, 0.007038]
+  policy_actions (denormalized, pre_postprocess) range: [-116179.3065, 104237.0969], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=325.653225 state_to_first_abs_max=265.220862 step_delta_l2_mean=1845.392248 step_delta_l2_max=5286.730991 step_delta_abs_max=5055.902622 step_acc_l2_mean=309.785241 step_acc_l2_max=651.976470 step_acc_abs_max=461.949586
+  policy_chunk_joint: joint_dims=6 state_to_first=[111.640625, 71.867188, 132.132812, 24.876221, -265.222656, -1.304688] step_delta_abs_max=[1448.972656, 1146.296875, 866.148438, 406.400269, 2012.281250, 5055.906250] step_acc_abs_max=[236.523438, 366.757812, 402.816406, 387.070435, 461.949219, 457.156250]
+  worker_actions (postprocess) range: [-116179.3065, 104214.6874], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=325.653225 state_to_first_abs_max=265.220862 step_delta_l2_mean=1724.640823 step_delta_l2_max=5123.988013 step_delta_abs_max=4847.817070 step_acc_l2_mean=201.142095 step_acc_l2_max=496.137722 step_acc_abs_max=378.368826
+  worker_chunk_joint: joint_dims=6 state_to_first=[111.640625, 71.867188, 132.132812, 24.876221, -265.222656, -1.304688] step_delta_abs_max=[1304.503906, 1091.593750, 814.453125, 242.671539, 1885.617188, 4847.816406] step_acc_abs_max=[180.488281, 174.843750, 162.921875, 175.696655, 259.441406, 378.367188]
+  main_actions (aligned_from_worker) range: [-115369.2371, 104214.6874], shape=(43, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=1014.820033 state_to_first_abs_max=808.762867 step_delta_l2_mean=1987.653632 step_delta_l2_max=5123.988013 step_delta_abs_max=4847.817070 step_acc_l2_mean=224.080601 step_acc_l2_max=496.137722 step_acc_abs_max=378.368826
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[-4.753906, 410.546875, 133.066406, -40.367188, -433.425781, 808.765625] step_delta_abs_max=[1304.503906, 1091.593750, 814.453125, 242.671539, 1885.617188, 4847.816406] step_acc_abs_max=[180.488281, 174.843750, 162.921875, 175.696655, 259.441406, 378.367188]
+  main_actions (post_main_postprocess) range: [-115369.2371, 104189.1236], shape=(43, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=1014.820033 state_to_first_abs_max=808.762867 step_delta_l2_mean=1860.615430 step_delta_l2_max=4957.755951 step_delta_abs_max=4726.409146 step_acc_l2_mean=190.945857 step_acc_l2_max=407.961937 step_acc_abs_max=330.913714
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[-4.753906, 410.546875, 133.066406, -40.367188, -433.425781, 808.765625] step_delta_abs_max=[1153.587891, 1080.125000, 766.441406, 207.803986, 1772.011719, 4726.410156] step_acc_abs_max=[164.496094, 123.960938, 107.429688, 76.108276, 204.570312, 330.906250]
+  queue_boundary: joint_dims=6 delta=[4.128906, 20.687500, -29.136719, -2.305054, 0.027344, 38.406250] l2=52.671841 abs_max=38.406250
+  chunk_handoff_dump: saved scripts/debug/chunk_handoff_dumps_async_postprocess_20hz_20step_9000/step_000014_mode_no_rtc.npz
+  queue_actions (post_transition) range: [-115866.8594, 104574.7031], shape=(43, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=982.355217 state_to_first_abs_max=895.703125 step_delta_l2_mean=1873.064422 step_delta_l2_max=4957.755789 step_delta_abs_max=4726.410156 step_acc_l2_mean=202.291875 step_acc_l2_max=407.956656 step_acc_abs_max=330.906250
+  queue_chunk_joint: joint_dims=6 state_to_first=[-31.822266, 895.703125, -210.800781, -9.531738, -142.789062, 311.140625] step_delta_abs_max=[1153.587891, 1172.156250, 808.066406, 207.803986, 1880.644531, 4726.410156] step_acc_abs_max=[164.496094, 151.375000, 115.949219, 76.108276, 252.203125, 330.906250]
+Step 15: infer time = 0.2534 seconds
+  raw_actions (normalized) range: [-0.9829, 1.5587], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.062217 step_delta_l2_max=0.108153 step_delta_abs_max=0.092011 step_acc_l2_mean=0.009925 step_acc_l2_max=0.027541 step_acc_abs_max=0.020574
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.053147, 0.026747, 0.036255, 0.024878, 0.062885, 0.092011] step_acc_abs_max=[0.013486, 0.005060, 0.009477, 0.009757, 0.018782, 0.020574]
+  policy_actions (denormalized, pre_postprocess) range: [-113550.3589, 103921.1465], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=366.134500 state_to_first_abs_max=266.641066 step_delta_l2_mean=3168.530611 step_delta_l2_max=6315.631113 step_delta_abs_max=5976.787998 step_acc_l2_mean=436.721457 step_acc_l2_max=1472.088707 step_acc_abs_max=1336.400405
+  policy_chunk_joint: joint_dims=6 state_to_first=[3.433594, -14.851562, 174.996094, -101.873047, -147.386719, 266.640625] step_delta_abs_max=[1825.086914, 1458.335938, 1664.410156, 561.208496, 2161.289062, 5976.787109] step_acc_abs_max=[463.100037, 275.882812, 435.058594, 220.096252, 645.500000, 1336.399902]
+  worker_actions (postprocess) range: [-113550.3589, 103921.1465], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=366.134500 state_to_first_abs_max=266.641066 step_delta_l2_mean=3084.820697 step_delta_l2_max=6156.856764 step_delta_abs_max=5837.335417 step_acc_l2_mean=328.682599 step_acc_l2_max=977.907347 step_acc_abs_max=895.796257
+  worker_chunk_joint: joint_dims=6 state_to_first=[3.433594, -14.851562, 174.996094, -101.873047, -147.386719, 266.640625] step_delta_abs_max=[1747.905273, 1344.531250, 1549.496094, 494.451904, 1901.453125, 5837.335938] step_acc_abs_max=[293.592712, 210.257812, 239.613281, 133.674133, 351.398438, 895.796875]
+  main_actions (aligned_from_worker) range: [-113253.2491, 100904.5646], shape=(44, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=5049.321365 state_to_first_abs_max=3877.101821 step_delta_l2_mean=3394.777707 step_delta_l2_max=6156.856764 step_delta_abs_max=5837.335417 step_acc_l2_mean=340.783743 step_acc_l2_max=977.907347 step_acc_abs_max=895.796257
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[-60.859375, -3031.437500, -935.722656, -277.546875, 3877.101562, 563.750000] step_delta_abs_max=[1747.905273, 1344.531250, 1549.496094, 494.451904, 1901.453125, 5837.335938] step_acc_abs_max=[293.592712, 210.257812, 239.613281, 133.674133, 351.398438, 895.796875]
+  main_actions (post_main_postprocess) range: [-113253.2491, 100904.5646], shape=(44, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=5049.321365 state_to_first_abs_max=3877.101821 step_delta_l2_mean=3307.624612 step_delta_l2_max=6017.047121 step_delta_abs_max=5699.250904 step_acc_l2_mean=320.955255 step_acc_l2_max=723.696208 step_acc_abs_max=675.601705
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[-60.859375, -3031.437500, -935.722656, -277.546875, 3877.101562, 563.750000] step_delta_abs_max=[1696.901367, 1236.921875, 1437.769531, 455.461182, 1793.953125, 5699.250000] step_acc_abs_max=[214.032898, 284.648438, 144.718750, 104.478149, 397.558594, 675.602539]
+  queue_boundary: joint_dims=6 delta=[6.330078, -1095.656250, -641.730469, -21.911133, 1633.824219, 309.703125] l2=2092.390625 abs_max=1633.824219
+  chunk_handoff_dump: saved scripts/debug/chunk_handoff_dumps_async_postprocess_20hz_20step_9000/step_000015_mode_no_rtc.npz
+  queue_actions (post_transition) range: [-113029.9375, 98438.6328], shape=(44, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=9805.957338 state_to_first_abs_max=7715.757812 step_delta_l2_mean=3174.563033 step_delta_l2_max=6017.045953 step_delta_abs_max=5699.250000 step_acc_l2_mean=295.782155 step_acc_l2_max=723.697823 step_acc_abs_max=675.602539
+  queue_chunk_joint: joint_dims=6 state_to_first=[17.064453, -5497.367188, -2394.789062, -219.229248, 7715.757812, 787.062500] step_delta_abs_max=[1696.901367, 1236.921875, 1437.769531, 455.461182, 1793.953125, 5699.250000] step_acc_abs_max=[217.539062, 157.875000, 138.890625, 104.478149, 241.210938, 675.602539]
+Step 16: infer time = 0.2649 seconds
+  raw_actions (normalized) range: [-1.3108, 1.5087], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.074937 step_delta_l2_max=0.103875 step_delta_abs_max=0.091345 step_acc_l2_mean=0.012810 step_acc_l2_max=0.034159 step_acc_abs_max=0.030731
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.047912, 0.036219, 0.037477, 0.037338, 0.075160, 0.091345] step_acc_abs_max=[0.010046, 0.007420, 0.009894, 0.030731, 0.025879, 0.020229]
+  policy_actions (denormalized, pre_postprocess) range: [-104748.3050, 88124.5840], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=310.563178 state_to_first_abs_max=210.416028 step_delta_l2_mean=3715.223693 step_delta_l2_max=6195.257449 step_delta_abs_max=5933.470982 step_acc_l2_mean=558.867443 step_acc_l2_max=1332.002207 step_acc_abs_max=1314.037241
+  policy_chunk_joint: joint_dims=6 state_to_first=[62.574219, -210.414062, 95.792969, 1.405029, -196.011719, 25.695312] step_delta_abs_max=[1645.292969, 1974.785156, 1720.492188, 842.300781, 2583.165039, 5933.470703] step_acc_abs_max=[344.993774, 404.574219, 454.230469, 693.255371, 889.425781, 1314.037109]
+  worker_actions (postprocess) range: [-104748.3050, 88124.5840], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=310.563178 state_to_first_abs_max=210.416028 step_delta_l2_mean=3636.889243 step_delta_l2_max=6037.703726 step_delta_abs_max=5780.486329 step_acc_l2_mean=365.154668 step_acc_l2_max=836.940998 step_acc_abs_max=785.682764
+  worker_chunk_joint: joint_dims=6 state_to_first=[62.574219, -210.414062, 95.792969, 1.405029, -196.011719, 25.695312] step_delta_abs_max=[1577.209961, 1858.179688, 1646.832031, 697.694092, 2384.470703, 5780.486328] step_acc_abs_max=[225.199219, 212.117188, 268.980469, 343.872559, 422.074219, 785.682739]
+  main_actions (aligned_from_worker) range: [-84857.5557, 84187.8448], shape=(43, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=20707.715464 state_to_first_abs_max=19916.444288 step_delta_l2_mean=3749.317152 step_delta_l2_max=6037.703726 step_delta_abs_max=5780.486329 step_acc_l2_mean=353.164446 step_acc_l2_max=836.940998 step_acc_abs_max=785.682764
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[1582.173828, -4147.156250, 221.718750, 32.782349, 3520.273438, 19916.445312] step_delta_abs_max=[1577.209961, 1858.179688, 1646.832031, 697.694092, 2384.470703, 5780.486328] step_acc_abs_max=[225.199219, 212.117188, 268.980469, 343.872559, 422.074219, 785.682739]
+  main_actions (post_main_postprocess) range: [-84857.5557, 84187.8448], shape=(43, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=20707.715464 state_to_first_abs_max=19916.444288 step_delta_l2_mean=3664.817245 step_delta_l2_max=5843.630031 step_delta_abs_max=5595.444013 step_acc_l2_mean=321.970866 step_acc_l2_max=1029.208811 step_acc_abs_max=977.573443
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[1582.173828, -4147.156250, 221.718750, 32.782349, 3520.273438, 19916.445312] step_delta_abs_max=[1516.506836, 1772.003906, 1605.207031, 638.986084, 2228.142578, 5595.443359] step_acc_abs_max=[191.648438, 229.898438, 199.953125, 194.374512, 311.871094, 977.578125]
+  queue_boundary: joint_dims=6 delta=[180.990234, -482.296875, 50.871094, 143.456055, 455.250000, 2526.093750] l2=2622.391357 abs_max=2526.093750
+  chunk_handoff_dump: saved scripts/debug/chunk_handoff_dumps_async_postprocess_20hz_20step_9000/step_000016_mode_no_rtc.npz
+  queue_actions (post_transition) range: [-90230.1328, 83814.2266], shape=(43, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=16163.272048 state_to_first_abs_max=14543.867188 step_delta_l2_mean=3787.981049 step_delta_l2_max=5849.509113 step_delta_abs_max=5580.746094 step_acc_l2_mean=297.198296 step_acc_l2_max=746.517375 step_acc_abs_max=682.992310
+  queue_chunk_joint: joint_dims=6 state_to_first=[433.191406, -4520.773438, -698.269531, 722.504578, 5300.250000, 14543.867188] step_delta_abs_max=[1611.249023, 1772.003906, 1605.207031, 628.995361, 2228.142578, 5580.746094] step_acc_abs_max=[223.468750, 149.171875, 181.535156, 194.374512, 286.609375, 682.992432]
+Step 17: infer time = 0.2502 seconds
+  raw_actions (normalized) range: [-1.5941, 1.3138], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.067656 step_delta_l2_max=0.110847 step_delta_abs_max=0.097689 step_acc_l2_mean=0.012075 step_acc_l2_max=0.023317 step_acc_abs_max=0.018302
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.048812, 0.039738, 0.037207, 0.036542, 0.073117, 0.097689] step_acc_abs_max=[0.009430, 0.010430, 0.006593, 0.017889, 0.016355, 0.018302]
+  policy_actions (denormalized, pre_postprocess) range: [-56643.3938, 75475.9650], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=505.977746 state_to_first_abs_max=315.034954 step_delta_l2_mean=3145.583858 step_delta_l2_max=6618.156616 step_delta_abs_max=6345.563394 step_acc_l2_mean=542.458396 step_acc_l2_max=1264.412387 step_acc_abs_max=1188.840689
+  policy_chunk_joint: joint_dims=6 state_to_first=[133.304688, -315.031250, 221.605469, 51.598633, -62.632812, 288.621094] step_delta_abs_max=[1676.200195, 2166.630859, 1708.093750, 824.334473, 2512.947266, 6345.564453] step_acc_abs_max=[323.812988, 568.695312, 302.673340, 403.558105, 562.099121, 1188.841797]
+  worker_actions (postprocess) range: [-56643.3938, 75475.9650], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=505.977746 state_to_first_abs_max=315.034954 step_delta_l2_mean=3074.375835 step_delta_l2_max=6016.881023 step_delta_abs_max=5728.331974 step_acc_l2_mean=382.856594 step_acc_l2_max=1648.115327 step_acc_abs_max=1581.961579
+  worker_chunk_joint: joint_dims=6 state_to_first=[133.304688, -315.031250, 221.605469, 51.598633, -62.632812, 288.621094] step_delta_abs_max=[1539.419922, 2014.589844, 1576.996094, 686.212891, 2449.535156, 5728.332031] step_acc_abs_max=[424.039062, 275.027344, 202.644531, 192.334961, 504.868164, 1581.960938]
+  main_actions (aligned_from_worker) range: [-54845.8086, 72203.8918], shape=(44, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=30277.756583 state_to_first_abs_max=28829.325685 step_delta_l2_mean=2806.805538 step_delta_l2_max=5508.300496 step_delta_abs_max=5144.929993 step_acc_l2_mean=331.822922 step_acc_l2_max=920.281396 step_acc_abs_max=868.948977
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[8036.472656, -3587.109375, 2019.191406, 253.633362, -2004.699219, 28829.326172] step_delta_abs_max=[1396.119873, 2014.589844, 1576.996094, 686.212891, 2449.535156, 5144.929688] step_acc_abs_max=[238.859863, 275.027344, 202.644531, 192.334961, 504.868164, 868.949707]
+  main_actions (post_main_postprocess) range: [-54845.8086, 72203.8918], shape=(44, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=30277.756583 state_to_first_abs_max=28829.325685 step_delta_l2_mean=2741.843315 step_delta_l2_max=4235.015056 step_delta_abs_max=3784.887404 step_acc_l2_mean=273.732514 step_acc_l2_max=1232.290719 step_acc_abs_max=1074.837334
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[8036.472656, -3587.109375, 2019.191406, 253.633362, -2004.699219, 28829.326172] step_delta_abs_max=[1099.610718, 1996.722656, 1507.679688, 592.456055, 2419.376953, 3784.887695] step_acc_abs_max=[311.733887, 202.367188, 228.296875, 165.934082, 422.823242, 1074.836914]
+  queue_boundary: joint_dims=6 delta=[1119.960815, -787.281250, 935.855469, 344.832886, -1573.191406, 3011.631592] l2=3796.539795 abs_max=3011.631592
+  chunk_handoff_dump: saved scripts/debug/chunk_handoff_dumps_async_postprocess_20hz_20step_9000/step_000017_mode_no_rtc.npz
+  queue_actions (post_transition) range: [-52510.4688, 71336.7344], shape=(44, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=49417.779536 state_to_first_abs_max=47201.618896 step_delta_l2_mean=2365.185853 step_delta_l2_max=3241.124731 step_delta_abs_max=2419.376953 step_acc_l2_mean=201.826498 step_acc_l2_max=626.195782 step_acc_abs_max=595.470886
+  queue_chunk_joint: joint_dims=6 state_to_first=[11296.994141, -4454.265625, 4354.531250, 844.347168, -6854.683594, 47201.617188] step_delta_abs_max=[958.699402, 1887.240234, 1274.876953, 589.956055, 2419.376953, 2168.478027] step_acc_abs_max=[170.830872, 149.863281, 131.097656, 157.522949, 422.823242, 595.470886]
+Step 18: infer time = 0.2470 seconds
+  raw_actions (normalized) range: [-1.0105, 1.1054], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.049228 step_delta_l2_max=0.101619 step_delta_abs_max=0.082795 step_acc_l2_mean=0.011678 step_acc_l2_max=0.031795 step_acc_abs_max=0.029966
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.013402, 0.038663, 0.032795, 0.043587, 0.082795, 0.005021] step_acc_abs_max=[0.007953, 0.009617, 0.014166, 0.020368, 0.029966, 0.008269]
+  policy_actions (denormalized, pre_postprocess) range: [-38548.3863, 57015.3600], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=234.598434 state_to_first_abs_max=186.613666 step_delta_l2_mean=2076.689369 step_delta_l2_max=3798.369572 step_delta_abs_max=2845.576675 step_acc_l2_mean=453.077549 step_acc_l2_max=1086.759496 step_acc_abs_max=1029.899702
+  policy_chunk_joint: joint_dims=6 state_to_first=[-15.549316, -138.640625, 186.613281, 24.588379, 7.894531, -9.057617] step_delta_abs_max=[460.213867, 2108.054688, 1505.544922, 983.254395, 2845.576172, 326.135986] step_acc_abs_max=[273.092529, 524.347656, 650.329834, 459.479370, 1029.898438, 537.141846]
+  worker_actions (postprocess) range: [-38548.3863, 57015.3600], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=234.598434 state_to_first_abs_max=186.613666 step_delta_l2_mean=2030.517260 step_delta_l2_max=3600.123898 step_delta_abs_max=2689.224145 step_acc_l2_mean=293.107149 step_acc_l2_max=708.176831 step_acc_abs_max=551.087003
+  worker_chunk_joint: joint_dims=6 state_to_first=[-15.549316, -138.640625, 186.613281, 24.588379, 7.894531, -9.057617] step_delta_abs_max=[395.156128, 2029.093750, 1404.794922, 791.656006, 2689.222656, 122.411377] step_acc_abs_max=[104.798828, 491.382812, 350.633545, 194.540039, 551.086914, 203.724365]
+  main_actions (aligned_from_worker) range: [-32826.3838, 46939.8439], shape=(44, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=14603.618179 state_to_first_abs_max=10214.156064 step_delta_l2_mean=1977.609634 step_delta_l2_max=3600.123898 step_delta_abs_max=2689.224145 step_acc_l2_mean=285.813298 step_acc_l2_max=597.141149 step_acc_abs_max=551.087003
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[-60.998291, -10214.156250, 5908.617188, 113.371094, -8599.320312, 245.062256] step_delta_abs_max=[395.156128, 1906.582031, 1404.794922, 791.656006, 2689.222656, 122.411377] step_acc_abs_max=[89.260010, 275.957031, 350.633545, 194.540039, 551.086914, 203.724365]
+  main_actions (post_main_postprocess) range: [-32826.3838, 46939.8439], shape=(44, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=14603.618179 state_to_first_abs_max=10214.156064 step_delta_l2_mean=1943.104572 step_delta_l2_max=3398.185513 step_delta_abs_max=2591.148494 step_acc_l2_mean=254.496951 step_acc_l2_max=862.166214 step_acc_abs_max=656.341250
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[-60.998291, -10214.156250, 5908.617188, 113.371094, -8599.320312, 245.062256] step_delta_abs_max=[342.909180, 1770.546875, 1363.828125, 638.790771, 2591.148438, 56.573242] step_acc_abs_max=[66.378418, 475.632812, 270.859375, 171.789795, 656.339844, 77.786865]
+  queue_boundary: joint_dims=6 delta=[75.031250, -1768.382812, 1006.085938, -161.312012, -1862.218750, 37.554199] l2=2764.110596 abs_max=1862.218750
+  chunk_handoff_dump: saved scripts/debug/chunk_handoff_dumps_async_postprocess_20hz_20step_9000/step_000018_mode_no_rtc.npz
+  queue_actions (post_transition) range: [-31488.4160, 45102.4297], shape=(44, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=18283.031829 state_to_first_abs_max=12051.570312 step_delta_l2_mean=1852.606610 step_delta_l2_max=2970.857323 step_delta_abs_max=2239.691406 step_acc_l2_mean=207.628532 step_acc_l2_max=483.055562 step_acc_abs_max=400.597168
+  queue_chunk_joint: joint_dims=6 state_to_first=[576.250977, -12051.570312, 7246.583984, 314.390137, -11663.808594, -201.467529] step_delta_abs_max=[342.909180, 1800.597656, 1180.191406, 557.971680, 2239.691406, 88.875000] step_acc_abs_max=[63.732422, 204.905640, 226.153320, 148.500977, 400.597168, 102.053711]
+Step 19: infer time = 0.2485 seconds
+  raw_actions (normalized) range: [-1.0015, 0.5895], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.024267 step_delta_l2_max=0.068064 step_delta_abs_max=0.067467 step_acc_l2_mean=0.009916 step_acc_l2_max=0.020823 step_acc_abs_max=0.018746
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.012891, 0.035282, 0.023900, 0.008025, 0.067467, 0.003703] step_acc_abs_max=[0.007339, 0.017482, 0.010999, 0.013423, 0.018746, 0.004689]
+  policy_actions (denormalized, pre_postprocess) range: [-17666.3822, 27041.1672], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=476.731940 state_to_first_abs_max=327.832833 step_delta_l2_mean=1062.171493 step_delta_l2_max=2338.496232 step_delta_abs_max=2318.794359 step_acc_l2_mean=414.308576 step_acc_l2_max=978.914773 step_acc_abs_max=953.178767
+  policy_chunk_joint: joint_dims=6 state_to_first=[94.529297, -327.832031, 236.617188, 9.149841, -83.210449, 218.786377] step_delta_abs_max=[442.693115, 1923.691406, 1097.193359, 181.043945, 2318.793945, 240.551270] step_acc_abs_max=[252.018188, 953.178772, 504.925568, 302.794067, 644.300781, 304.566650]
+  worker_actions (postprocess) range: [-17666.3822, 27041.1672], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=476.731940 state_to_first_abs_max=327.832833 step_delta_l2_mean=993.664379 step_delta_l2_max=2116.696445 step_delta_abs_max=2083.530582 step_acc_l2_mean=223.166042 step_acc_l2_max=568.792703 step_acc_abs_max=512.570530
+  worker_chunk_joint: joint_dims=6 state_to_first=[94.529297, -327.832031, 236.617188, 9.149841, -83.210449, 218.786377] step_delta_abs_max=[336.669922, 1793.234375, 1013.217773, 122.233154, 2083.531250, 132.383545] step_acc_abs_max=[107.170898, 512.570679, 253.525391, 119.377090, 466.744141, 131.032104]
+  main_actions (aligned_from_worker) range: [-12635.0417, 24662.9382], shape=(44, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=10600.113049 state_to_first_abs_max=9178.391795 step_delta_l2_mean=894.596446 step_delta_l2_max=2116.696445 step_delta_abs_max=2083.530582 step_acc_l2_mean=220.838457 step_acc_l2_max=568.792703 step_acc_abs_max=512.570530
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[-180.271729, -9178.392578, 5267.958008, -558.720581, -141.759766, -58.084961] step_delta_abs_max=[336.669922, 1690.312500, 1013.217773, 100.433243, 2083.531250, 132.383545] step_acc_abs_max=[107.170898, 512.570679, 218.977783, 119.377090, 466.744141, 131.032104]
+  main_actions (post_main_postprocess) range: [-12635.0417, 24536.6910], shape=(44, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=10600.113049 state_to_first_abs_max=9178.391795 step_delta_l2_mean=860.411800 step_delta_l2_max=1983.893551 step_delta_abs_max=1949.747129 step_acc_l2_mean=165.286535 step_acc_l2_max=447.534793 step_acc_abs_max=386.344511
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[-180.271729, -9178.392578, 5267.958008, -558.720581, -141.759766, -58.084961] step_delta_abs_max=[294.950684, 1498.010742, 908.709961, 85.537979, 1949.747070, 85.092773] step_acc_abs_max=[73.805908, 386.343750, 213.767578, 47.607651, 368.080566, 61.687500]
+  queue_boundary: joint_dims=6 delta=[-120.667969, -1556.160156, 885.735352, -32.154480, -4.632324, 42.653809] l2=1795.437866 abs_max=1556.160156
+  chunk_handoff_dump: saved scripts/debug/chunk_handoff_dumps_async_postprocess_20hz_20step_9000/step_000019_mode_no_rtc.npz
+  queue_actions (post_transition) range: [-10495.7314, 24536.6914], shape=(44, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=14355.987709 state_to_first_abs_max=12237.664062 step_delta_l2_mean=802.934152 step_delta_l2_max=1786.635734 step_delta_abs_max=1688.705078 step_acc_l2_mean=138.473212 step_acc_l2_max=333.709159 step_acc_abs_max=294.187500
+  queue_chunk_joint: joint_dims=6 state_to_first=[-612.316162, -12237.664062, 7407.268555, -604.130859, -842.618652, 128.150635] step_delta_abs_max=[276.016357, 1557.434570, 862.125977, 51.744141, 1688.705078, 77.708496] step_acc_abs_max=[51.667725, 196.957947, 150.968262, 42.297867, 294.187500, 54.927612]
+Step 20: infer time = 0.2761 seconds
+  raw_actions (normalized) range: [-0.9964, 0.4139], shape=(50, 7)
+  raw_chunk: joint_dims=6 state_to_first_l2=n/a state_to_first_abs_max=n/a step_delta_l2_mean=0.010332 step_delta_l2_max=0.068672 step_delta_abs_max=0.068522 step_acc_l2_mean=0.007283 step_acc_l2_max=0.020924 step_acc_abs_max=0.019086
+  raw_chunk_joint: joint_dims=6 state_to_first=n/a step_delta_abs_max=[0.003254, 0.007785, 0.017479, 0.004671, 0.068522, 0.003870] step_acc_abs_max=[0.005658, 0.005138, 0.009282, 0.005235, 0.019086, 0.006148]
+  policy_actions (denormalized, pre_postprocess) range: [-2888.3118, 23463.2646], shape=(50, 7)
+  policy_chunk: joint_dims=6 state_to_first_l2=406.141943 state_to_first_abs_max=268.633704 step_delta_l2_mean=396.215148 step_delta_l2_max=2358.477226 step_delta_abs_max=2355.053817 step_acc_l2_mean=302.119533 step_acc_l2_max=810.597526 step_acc_abs_max=655.980704
+  policy_chunk_joint: joint_dims=6 state_to_first=[91.737427, -268.633698, 241.688232, -1.929584, -139.193359, 81.114990] step_delta_abs_max=[111.740723, 424.448944, 802.430176, 105.370293, 2355.054688, 251.388184] step_acc_abs_max=[194.289551, 280.155884, 426.104858, 118.092834, 655.982422, 399.323730]
+  worker_actions (postprocess) range: [-2888.3118, 23268.1311], shape=(50, 7)
+  worker_chunk: joint_dims=6 state_to_first_l2=406.141943 state_to_first_abs_max=268.633704 step_delta_l2_mean=317.911777 step_delta_l2_max=1929.210493 step_delta_abs_max=1926.175493 step_acc_l2_mean=155.603871 step_acc_l2_max=516.101411 step_acc_abs_max=476.357599
+  worker_chunk_joint: joint_dims=6 state_to_first=[91.737427, -268.633698, 241.688232, -1.929584, -139.193359, 81.114990] step_delta_abs_max=[45.831909, 270.326782, 507.340454, 80.611694, 1926.175781, 121.154297] step_acc_abs_max=[68.280518, 131.939941, 159.989868, 49.152397, 476.356445, 150.825439]
+  main_actions (aligned_from_worker) range: [-1217.6051, 23268.1311], shape=(43, 7)
+  main_aligned_chunk: joint_dims=6 state_to_first_l2=8832.398059 state_to_first_abs_max=8573.810771 step_delta_l2_mean=149.526330 step_delta_l2_max=1086.916556 step_delta_abs_max=1076.612866 step_acc_l2_mean=116.702052 step_acc_l2_max=375.203416 step_acc_abs_max=358.760169
+  main_aligned_chunk_joint: joint_dims=6 state_to_first=[53.727173, -893.296936, 1912.394897, 188.721100, 8573.810547, 85.373047] step_delta_abs_max=[45.831909, 89.272217, 348.718201, 32.816147, 1076.613281, 121.154297] step_acc_abs_max=[68.280518, 106.397217, 114.219666, 49.022106, 358.759766, 150.825439]
+  main_actions (post_main_postprocess) range: [-1217.6051, 23095.1145], shape=(43, 7)
+  main_postprocess_chunk: joint_dims=6 state_to_first_l2=8832.398059 state_to_first_abs_max=8573.810771 step_delta_l2_mean=118.149897 step_delta_l2_max=650.193206 step_delta_abs_max=634.046765 step_acc_l2_mean=56.672520 step_acc_l2_max=198.788011 step_acc_abs_max=193.456810
+  main_postprocess_chunk_joint: joint_dims=6 state_to_first=[53.727173, -893.296936, 1912.394897, 188.721100, 8573.810547, 85.373047] step_delta_abs_max=[22.714355, 46.426758, 315.925018, 27.075562, 634.046875, 56.101318] step_acc_abs_max=[27.359497, 36.975098, 89.298340, 18.722481, 193.457031, 68.445068]
+  queue_boundary: joint_dims=6 delta=[16.790649, 168.528290, 298.923828, 9.147476, 516.871094, 41.315063] l2=622.081604 abs_max=516.871094
+  chunk_handoff_dump: saved scripts/debug/chunk_handoff_dumps_async_postprocess_20hz_20step_9000/step_000020_mode_no_rtc.npz
+  queue_actions (post_transition) range: [-2271.1436, 24392.4688], shape=(43, 7)
+  queue_chunk: joint_dims=6 state_to_first_l2=11679.193279 state_to_first_abs_max=11645.009766 step_delta_l2_mean=121.591052 step_delta_l2_max=488.990203 step_delta_abs_max=448.719116 step_acc_l2_mean=49.543252 step_acc_l2_max=193.072527 step_acc_abs_max=173.611328
+  queue_chunk_joint: joint_dims=6 state_to_first=[23.231812, -188.760529, 858.856445, 125.909821, 11645.009766, -87.437256] step_delta_abs_max=[26.397095, 125.105156, 448.719116, 25.953629, 284.935547, 38.834473] step_acc_abs_max=[27.359497, 92.380219, 79.614563, 18.625950, 173.611328, 54.228516]
