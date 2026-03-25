@@ -181,6 +181,8 @@ class AgileXInputs(transforms.DataTransformFn):
     # 图像 slot 名称映射。如果为 None，自动生成 "image_0", "image_1", ...
     # 如果提供，长度必须与 camera_names 一致。
     image_slot_names: tuple[str, ...] | None = None
+    # 需要最终补齐的图像 slot 列表。缺失 slot 会被零图像填充，mask=False。
+    required_image_slot_names: tuple[str, ...] | None = None
 
     EXPECTED_CAMERAS: ClassVar[tuple[str, ...]] = ("camera0", "camera1", "camera2", "camera3", 'camera0_depth',
                                                    'camera1_depth', 'camera2_depth', 'camera3_depth',)
@@ -218,6 +220,23 @@ class AgileXInputs(transforms.DataTransformFn):
                     raise ValueError(f"Expected camera '{cam_name}' in images, got {tuple(in_images)}")
                 images[slot_name] = in_images[cam_name]
                 image_masks[slot_name] = np.True_
+
+            required_slot_names = self.required_image_slot_names or slot_names
+            if required_slot_names:
+                if not images:
+                    raise ValueError("required_image_slot_names is set, but no images were produced.")
+                template_image = next(iter(images.values()))
+                padded_images = {}
+                padded_image_masks = {}
+                for slot_name in required_slot_names:
+                    if slot_name in images:
+                        padded_images[slot_name] = images[slot_name]
+                        padded_image_masks[slot_name] = image_masks[slot_name]
+                    else:
+                        padded_images[slot_name] = np.zeros_like(template_image)
+                        padded_image_masks[slot_name] = np.False_
+                images = padded_images
+                image_masks = padded_image_masks
 
             if self.use_depth:
                 base_image_depth = depth_rgb_u8_to_u16(in_images["camera0_depth"])
