@@ -1,10 +1,12 @@
 from flax import nnx
 import jax
+import jax.numpy as jnp
 import pytest
 
 from openpi.models import model as _model
 from openpi.models import pi0_config
 from openpi.models import pi0_fast
+from openpi.models import rtc_utils_jax
 from openpi.shared import download
 from openpi.shared import nnx_utils
 
@@ -36,6 +38,28 @@ def test_pi0_lora_model():
     assert loss.shape == (batch_size, config.action_horizon)
 
     actions = nnx_utils.module_jit(model.sample_actions)(key, obs, num_steps=10)
+    assert actions.shape == (batch_size, model.action_horizon, model.action_dim)
+
+
+def test_pi0_model_rtc():
+    key = jax.random.key(0)
+    config = pi0_config.Pi0Config()
+    model = config.create(key)
+
+    batch_size = 2
+    obs, _act = config.fake_obs(batch_size), config.fake_act(batch_size)
+    rtc_config = rtc_utils_jax.PaperRTCConfig(enabled=True, beta=5.0)
+    prev_actions = jnp.zeros((batch_size, model.action_horizon, model.action_dim), dtype=jnp.float32)
+
+    actions = nnx_utils.module_jit(model.sample_actions_rtc)(
+        key,
+        obs,
+        num_steps=5,
+        rtc_config=rtc_config,
+        prev_actions=prev_actions,
+        inference_delay=2,
+        execution_horizon=25,
+    )
     assert actions.shape == (batch_size, model.action_horizon, model.action_dim)
 
 

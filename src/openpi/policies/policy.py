@@ -64,7 +64,10 @@ class Policy(BasePolicy):
         else:
             # JAX model setup
             self._sample_actions = nnx_utils.module_jit(model.sample_actions)
-            self._sample_actions_rtc = None
+            if hasattr(model, "sample_actions_rtc"):
+                self._sample_actions_rtc = nnx_utils.module_jit(model.sample_actions_rtc)
+            else:
+                self._sample_actions_rtc = None
             self._rng = rng or jax.random.key(0)
 
     @override
