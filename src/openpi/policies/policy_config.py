@@ -3,6 +3,8 @@ import os
 import pathlib
 from typing import Any
 
+import jax.numpy as jnp
+
 import openpi.models.model as _model
 from openpi.models import rtc_utils_jax as _rtc_utils_jax
 from openpi.models_pytorch.rtc_utils import RTCExecutedPrefixTransformSpec

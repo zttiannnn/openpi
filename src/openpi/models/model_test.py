@@ -7,10 +7,15 @@ from openpi.models import model as _model
 from openpi.models import pi0_config
 from openpi.models import pi0_fast
 from openpi.models import rtc_utils_jax
+from openpi.models import tokenizer as _tokenizer
+from openpi.policies import policy as _policy
 from openpi.policies import policy_config as _policy_config
+from openpi.shared import download as _download
 from openpi.shared import download
 from openpi.shared import nnx_utils
 from openpi.shared.normalize import NormStats
+from openpi.training import checkpoints as _checkpoints
+from openpi.training import config as _config
 
 
 def test_pi0_model():
@@ -189,6 +194,36 @@ def test_pi0_model_module_jit_accepts_static_executed_transform_spec():
     obs, _act = config.fake_obs(batch_size), config.fake_act(batch_size)
     actions = nnx_utils.module_jit(model.sample_actions)(key, obs, num_steps=5)
     assert actions.shape == (batch_size, model.action_horizon, model.action_dim)
+
+
+def test_create_trained_policy_jax_path_keeps_jnp_dtype_available(tmp_path, monkeypatch):
+    train_config = _config.get_config("pi05_agileX_thor_jax")
+    checkpoint_dir = tmp_path / "checkpoint"
+    (checkpoint_dir / "params").mkdir(parents=True)
+    (checkpoint_dir / "assets").mkdir(parents=True)
+
+    fake_model = pi0_config.Pi0Config().create(jax.random.key(0))
+    action_dim = int(fake_model.action_dim)
+
+    monkeypatch.setattr(_download, "maybe_download", lambda path, **_kwargs: checkpoint_dir)
+    monkeypatch.setattr(_tokenizer, "PaligemmaTokenizer", lambda *args, **kwargs: object())
+    monkeypatch.setattr(_model, "restore_params", lambda path, dtype=None: {"dtype": dtype, "path": path})
+    monkeypatch.setattr(type(train_config.model), "load", lambda self, params: fake_model)
+    monkeypatch.setattr(
+        _checkpoints,
+        "load_norm_stats",
+        lambda _norm_stats_path, _asset_id: {
+            "actions": NormStats(
+                mean=jnp.zeros((action_dim,), dtype=jnp.float32),
+                std=jnp.ones((action_dim,), dtype=jnp.float32),
+                q01=jnp.full((action_dim,), -1.0, dtype=jnp.float32),
+                q99=jnp.full((action_dim,), 1.0, dtype=jnp.float32),
+            )
+        },
+    )
+
+    policy = _policy_config.create_trained_policy(train_config, checkpoint_dir)
+    assert isinstance(policy, _policy.Policy)
 
 
 def test_paper_rtc_config_unknown_mode_raises():
