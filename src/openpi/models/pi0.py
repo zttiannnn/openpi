@@ -293,6 +293,7 @@ class Pi0(_model.BaseModel):
         rtc_config: rtc_utils_jax.PaperRTCConfig | None = None,
         prev_actions: at.Float[at.Array, "b ah ad"] | None = None,
         processed_leftover: at.Float[at.Array, "b ah ed"] | None = None,
+        processed_leftover_len: int | at.Int[at.Array, ""] | None = None,
         observation_state: at.Float[at.Array, "b s"] | None = None,
         executed_transform_spec: rtc_utils_jax.RTCExecutedPrefixTransformSpec | None = None,
         inference_delay: int | at.Int[at.Array, ""] = 0,
@@ -338,6 +339,7 @@ class Pi0(_model.BaseModel):
                 denoise_step_partial=denoise_step_partial,
                 rtc_config=rtc_config,
                 processed_leftover=processed_leftover,
+                processed_leftover_len=processed_leftover_len,
                 observation_state=observation_state,
                 executed_transform_spec=executed_transform_spec,
             )

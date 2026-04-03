@@ -195,11 +195,30 @@ def pad_prev_actions(prev_actions: np.ndarray | None, *, action_horizon: int, ac
     return padded
 
 
+def pad_processed_leftover(
+    processed_leftover: np.ndarray | None,
+    *,
+    action_horizon: int,
+    action_dim: int,
+) -> np.ndarray:
+    padded = np.zeros((action_horizon, action_dim), dtype=np.float32)
+    if processed_leftover is None:
+        return padded
+    processed_leftover = np.asarray(processed_leftover, dtype=np.float32)
+    if processed_leftover.ndim == 1:
+        processed_leftover = processed_leftover[None, :]
+    copy_horizon = min(processed_leftover.shape[0], action_horizon)
+    copy_dim = min(processed_leftover.shape[1], action_dim)
+    padded[:copy_horizon, :copy_dim] = processed_leftover[:copy_horizon, :copy_dim]
+    return padded
+
+
 def build_rtc_context(
     *,
     rtc_config,
     prev_actions: np.ndarray | None,
     processed_leftover: np.ndarray | None,
+    processed_leftover_len: int | None = None,
     inference_delay: int,
     execution_horizon: int,
 ) -> dict:
@@ -211,6 +230,7 @@ def build_rtc_context(
     }
     if rtc_config is not None and rtc_utils_jax.resolve_rtc_mode(rtc_config) == "executed_overlap_paper":
         rtc_context["processed_leftover"] = processed_leftover
+        rtc_context["processed_leftover_len"] = 0 if processed_leftover_len is None else int(processed_leftover_len)
     return rtc_context
 
 
@@ -430,7 +450,14 @@ def main() -> None:
             action_horizon=action_horizon,
         )
         warmup_prev_actions = np.zeros((action_horizon, action_dim), dtype=np.float32)
-        warmup_processed_leftover = initial_actions if args.rtc_mode == "executed_overlap_paper" else None
+        warmup_processed_leftover_unpadded = (
+            initial_actions[warmup_execution_horizon:] if args.rtc_mode == "executed_overlap_paper" else None
+        )
+        warmup_processed_leftover = pad_processed_leftover(
+            warmup_processed_leftover_unpadded,
+            action_horizon=action_horizon,
+            action_dim=action_dim,
+        )
         warmup_obs = build_policy_observation(
             robot,
             tokenized_prompt=tokenized_prompt,
@@ -440,6 +467,9 @@ def main() -> None:
             rtc_config=rtc_model_config,
             prev_actions=warmup_prev_actions,
             processed_leftover=warmup_processed_leftover,
+            processed_leftover_len=(
+                0 if warmup_processed_leftover_unpadded is None else len(warmup_processed_leftover_unpadded)
+            ),
             inference_delay=max(int(args.rtc_initial_delay), 0),
             execution_horizon=int(warmup_execution_horizon),
         )
@@ -455,7 +485,7 @@ def main() -> None:
         emit(
             f"RTC warmup ready: mode={args.rtc_mode} infer_ms={warmup_infer_ms:.2f} "
             f"execution_horizon={warmup_execution_horizon} delay_est={warmup_context['inference_delay']} "
-            f"processed_leftover={'initial_actions' if warmup_processed_leftover is not None else 'None'}"
+            f"processed_leftover_len={warmup_context.get('processed_leftover_len', 'n/a')}"
         )
 
         action_queue = JAXRTCActionQueue()
@@ -649,10 +679,18 @@ def main() -> None:
                     action_horizon=action_horizon,
                     action_dim=action_dim,
                 )
+                processed_leftover = pad_processed_leftover(
+                    current_processed_leftover,
+                    action_horizon=action_horizon,
+                    action_dim=action_dim,
+                )
                 rtc_context = build_rtc_context(
                     rtc_config=rtc_model_config,
                     prev_actions=prev_actions,
-                    processed_leftover=current_processed_leftover,
+                    processed_leftover=processed_leftover,
+                    processed_leftover_len=(
+                        0 if current_processed_leftover is None else len(current_processed_leftover)
+                    ),
                     inference_delay=int(delay_estimate),
                     execution_horizon=int(execution_horizon),
                 )

@@ -241,10 +241,12 @@ def test_build_rtc_context_only_includes_processed_leftover_for_executed_mode():
         rtc_config=rtc_utils_jax.PaperRTCConfig(enabled=True, mode="executed_overlap_paper", beta=5.0),
         prev_actions=jnp.zeros((2, 3), dtype=jnp.float32),
         processed_leftover=jnp.ones((2, 3), dtype=jnp.float32),
+        processed_leftover_len=2,
         inference_delay=0,
         execution_horizon=25,
     )
     assert "processed_leftover" in executed_context
+    assert executed_context["processed_leftover_len"] == 2
 
 
 def test_paper_rtc_config_unknown_mode_raises():

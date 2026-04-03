@@ -276,6 +276,7 @@ def apply_rtc_guidance(
     denoise_step_partial,
     rtc_config: PaperRTCConfig,
     processed_leftover: jax.Array | None = None,
+    processed_leftover_len: int | jax.Array | None = None,
     observation_state: jax.Array | None = None,
     executed_transform_spec: RTCExecutedPrefixTransformSpec | None = None,
 ) -> jax.Array:
@@ -350,9 +351,18 @@ def apply_rtc_guidance(
             if available_overlap <= 0 or arm_joint_dims <= 0:
                 return jnp.zeros((), dtype=dtype), v_t
 
+            guidance_end = jnp.clip(
+                jnp.asarray(
+                    processed_target.shape[1] if processed_leftover_len is None else processed_leftover_len,
+                    dtype=jnp.int32,
+                ),
+                0,
+                available_overlap,
+            )
+
             weights = get_prefix_weights(
                 start=inference_delay,
-                end=available_overlap,
+                end=guidance_end,
                 total=available_overlap,
                 schedule="exp",
             ).astype(dtype)[None, :, None]

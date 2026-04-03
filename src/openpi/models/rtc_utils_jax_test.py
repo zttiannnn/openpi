@@ -220,6 +220,55 @@ def test_apply_rtc_guidance_executed_overlap_reduces_decoded_overlap_error_when_
     assert float(guided_err) < float(baseline_err)
 
 
+def test_apply_rtc_guidance_executed_overlap_respects_processed_leftover_len_for_padded_targets():
+    rtc_config = rtc_utils_jax.PaperRTCConfig(enabled=True, beta=0.5, mode="executed_overlap_paper")
+    transform_spec = rtc_utils_jax.RTCExecutedPrefixTransformSpec(
+        action_mean=jnp.zeros(2, dtype=jnp.float32),
+        action_std=jnp.ones(2, dtype=jnp.float32),
+        arm_joint_dims=2,
+    )
+    x_t = jnp.array([[[1.5, -1.5], [1.0, -1.0], [0.5, -0.5], [0.25, -0.25]]], dtype=jnp.float32)
+    short_target = jnp.zeros((1, 2, 2), dtype=jnp.float32)
+    padded_target = jnp.array(
+        [[[0.0, 0.0], [0.0, 0.0], [25.0, -25.0], [25.0, -25.0]]],
+        dtype=jnp.float32,
+    )
+    observation_state = jnp.zeros((1, 2), dtype=jnp.float32)
+    time = jnp.asarray(0.5, dtype=jnp.float32)
+
+    def denoise_step_partial(x):
+        return 0.75 * x
+
+    guided_short = rtc_utils_jax.apply_rtc_guidance(
+        x_t=x_t,
+        prev_chunk_left_over=jnp.zeros_like(x_t),
+        inference_delay=0,
+        execution_horizon=1,
+        time=time,
+        denoise_step_partial=denoise_step_partial,
+        rtc_config=rtc_config,
+        processed_leftover=short_target,
+        processed_leftover_len=2,
+        observation_state=observation_state,
+        executed_transform_spec=transform_spec,
+    )
+    guided_padded = rtc_utils_jax.apply_rtc_guidance(
+        x_t=x_t,
+        prev_chunk_left_over=jnp.zeros_like(x_t),
+        inference_delay=0,
+        execution_horizon=1,
+        time=time,
+        denoise_step_partial=denoise_step_partial,
+        rtc_config=rtc_config,
+        processed_leftover=padded_target,
+        processed_leftover_len=2,
+        observation_state=observation_state,
+        executed_transform_spec=transform_spec,
+    )
+
+    np.testing.assert_allclose(np.asarray(guided_padded), np.asarray(guided_short), atol=1e-6, rtol=0.0)
+
+
 @pytest.mark.parametrize(
     "missing_field",
     ("processed_leftover", "observation_state", "executed_transform_spec"),
