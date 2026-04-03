@@ -16,6 +16,7 @@ from openpi.shared import nnx_utils
 from openpi.shared.normalize import NormStats
 from openpi.training import checkpoints as _checkpoints
 from openpi.training import config as _config
+from scripts import inference_jax_rtc_0325 as _inference_jax_rtc_0325
 
 
 def test_pi0_model():
@@ -224,6 +225,26 @@ def test_create_trained_policy_jax_path_keeps_jnp_dtype_available(tmp_path, monk
 
     policy = _policy_config.create_trained_policy(train_config, checkpoint_dir)
     assert isinstance(policy, _policy.Policy)
+
+
+def test_build_rtc_context_only_includes_processed_leftover_for_executed_mode():
+    raw_context = _inference_jax_rtc_0325.build_rtc_context(
+        rtc_config=rtc_utils_jax.PaperRTCConfig(enabled=True, mode="raw_paper", beta=5.0),
+        prev_actions=jnp.zeros((2, 3), dtype=jnp.float32),
+        processed_leftover=jnp.ones((2, 3), dtype=jnp.float32),
+        inference_delay=0,
+        execution_horizon=25,
+    )
+    assert "processed_leftover" not in raw_context
+
+    executed_context = _inference_jax_rtc_0325.build_rtc_context(
+        rtc_config=rtc_utils_jax.PaperRTCConfig(enabled=True, mode="executed_overlap_paper", beta=5.0),
+        prev_actions=jnp.zeros((2, 3), dtype=jnp.float32),
+        processed_leftover=jnp.ones((2, 3), dtype=jnp.float32),
+        inference_delay=0,
+        execution_horizon=25,
+    )
+    assert "processed_leftover" in executed_context
 
 
 def test_paper_rtc_config_unknown_mode_raises():

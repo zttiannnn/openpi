@@ -203,13 +203,15 @@ def build_rtc_context(
     inference_delay: int,
     execution_horizon: int,
 ) -> dict:
-    return {
+    rtc_context = {
         "rtc_config": rtc_config,
         "prev_actions": prev_actions,
-        "processed_leftover": processed_leftover,
         "inference_delay": int(inference_delay),
         "execution_horizon": int(execution_horizon),
     }
+    if rtc_config is not None and rtc_utils_jax.resolve_rtc_mode(rtc_config) == "executed_overlap_paper":
+        rtc_context["processed_leftover"] = processed_leftover
+    return rtc_context
 
 
 def resolve_runtime_guidance_mode(rtc_mode: str) -> str:
