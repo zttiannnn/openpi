@@ -292,12 +292,18 @@ class Pi0(_model.BaseModel):
         *,
         rtc_config: rtc_utils_jax.PaperRTCConfig | None = None,
         prev_actions: at.Float[at.Array, "b ah ad"] | None = None,
+        processed_leftover: at.Float[at.Array, "b ah ed"] | None = None,
+        observation_state: at.Float[at.Array, "b s"] | None = None,
+        executed_transform_spec: rtc_utils_jax.RTCExecutedPrefixTransformSpec | None = None,
         inference_delay: int | at.Int[at.Array, ""] = 0,
         execution_horizon: int | at.Int[at.Array, ""] | None = None,
         num_steps: int | at.Int[at.Array, ""] = 10,
         noise: at.Float[at.Array, "b ah ad"] | None = None,
     ) -> _model.Actions:
-        if rtc_config is None or prev_actions is None:
+        if rtc_config is None:
+            return self.sample_actions(rng, observation, num_steps=num_steps, noise=noise)
+        rtc_mode = rtc_utils_jax.resolve_rtc_mode(rtc_config)
+        if rtc_mode == "raw_paper" and prev_actions is None:
             return self.sample_actions(rng, observation, num_steps=num_steps, noise=noise)
 
         observation, prefix_tokens, prefix_mask, kv_cache = self._prepare_sampling_prefix(observation)
@@ -307,6 +313,8 @@ class Pi0(_model.BaseModel):
             noise = jax.random.normal(rng, (batch_size, self.action_horizon, self.action_dim))
         if execution_horizon is None:
             execution_horizon = self.action_horizon // 2
+        if observation_state is None:
+            observation_state = observation.state
 
         def step(carry):
             x_t, time = carry
@@ -329,6 +337,9 @@ class Pi0(_model.BaseModel):
                 time=time,
                 denoise_step_partial=denoise_step_partial,
                 rtc_config=rtc_config,
+                processed_leftover=processed_leftover,
+                observation_state=observation_state,
+                executed_transform_spec=executed_transform_spec,
             )
             return x_t + dt * v_t, time + dt
 

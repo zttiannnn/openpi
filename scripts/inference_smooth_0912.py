@@ -1,6 +1,5 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
 import time
 import argparse
 import csv

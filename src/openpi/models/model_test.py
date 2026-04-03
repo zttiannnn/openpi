@@ -63,6 +63,111 @@ def test_pi0_model_rtc():
     assert actions.shape == (batch_size, model.action_horizon, model.action_dim)
 
 
+def test_pi0_model_rtc_executed_overlap_mode():
+    key = jax.random.key(0)
+    config = pi0_config.Pi0Config()
+    model = config.create(key)
+
+    batch_size = 2
+    obs, _act = config.fake_obs(batch_size), config.fake_act(batch_size)
+    rtc_config = rtc_utils_jax.PaperRTCConfig(enabled=True, mode="executed_overlap_paper", beta=5.0)
+    noise = jnp.linspace(
+        -1.0,
+        1.0,
+        batch_size * model.action_horizon * model.action_dim,
+        dtype=jnp.float32,
+    ).reshape(batch_size, model.action_horizon, model.action_dim)
+    prev_actions = jnp.zeros((batch_size, model.action_horizon, model.action_dim), dtype=jnp.float32)
+    processed_leftover = jnp.full((batch_size, model.action_horizon, 6), 3.0, dtype=jnp.float32)
+    executed_transform_spec = rtc_utils_jax.RTCExecutedPrefixTransformSpec(
+        action_mean=jnp.zeros((model.action_dim,), dtype=jnp.float32),
+        action_std=jnp.ones((model.action_dim,), dtype=jnp.float32),
+        arm_joint_dims=6,
+    )
+
+    baseline = nnx_utils.module_jit(model.sample_actions_rtc)(
+        key,
+        obs,
+        num_steps=5,
+        rtc_config=rtc_utils_jax.PaperRTCConfig(enabled=False, mode="executed_overlap_paper", beta=5.0),
+        prev_actions=prev_actions,
+        inference_delay=2,
+        execution_horizon=25,
+        noise=noise,
+    )
+    raw_actions = nnx_utils.module_jit(model.sample_actions_rtc)(
+        key,
+        obs,
+        num_steps=5,
+        rtc_config=rtc_utils_jax.PaperRTCConfig(enabled=True, mode="raw_paper", beta=5.0),
+        prev_actions=prev_actions,
+        inference_delay=2,
+        execution_horizon=25,
+        noise=noise,
+    )
+    executed_actions = nnx_utils.module_jit(model.sample_actions_rtc)(
+        key,
+        obs,
+        num_steps=5,
+        rtc_config=rtc_config,
+        inference_delay=2,
+        execution_horizon=25,
+        processed_leftover=processed_leftover,
+        observation_state=obs.state,
+        executed_transform_spec=executed_transform_spec,
+        noise=noise,
+    )
+    assert executed_actions.shape == (batch_size, model.action_horizon, model.action_dim)
+    assert not jnp.allclose(executed_actions, baseline)
+    assert not jnp.allclose(executed_actions, raw_actions)
+
+
+def test_pi0_model_rtc_executed_overlap_missing_inputs_matches_unguided_baseline():
+    key = jax.random.key(0)
+    config = pi0_config.Pi0Config()
+    model = config.create(key)
+
+    batch_size = 2
+    obs, _act = config.fake_obs(batch_size), config.fake_act(batch_size)
+    noise = jnp.linspace(
+        -0.5,
+        0.5,
+        batch_size * model.action_horizon * model.action_dim,
+        dtype=jnp.float32,
+    ).reshape(batch_size, model.action_horizon, model.action_dim)
+    rtc_config = rtc_utils_jax.PaperRTCConfig(enabled=True, mode="executed_overlap_paper", beta=5.0)
+    prev_actions = jnp.full((batch_size, model.action_horizon, model.action_dim), 2.0, dtype=jnp.float32)
+
+    baseline = nnx_utils.module_jit(model.sample_actions_rtc)(
+        key,
+        obs,
+        num_steps=5,
+        rtc_config=rtc_utils_jax.PaperRTCConfig(enabled=False, mode="executed_overlap_paper", beta=5.0),
+        prev_actions=prev_actions,
+        inference_delay=2,
+        execution_horizon=25,
+        noise=noise,
+    )
+    actions = nnx_utils.module_jit(model.sample_actions_rtc)(
+        key,
+        obs,
+        num_steps=5,
+        rtc_config=rtc_config,
+        prev_actions=prev_actions,
+        inference_delay=2,
+        execution_horizon=25,
+        noise=noise,
+    )
+
+    assert actions.shape == (batch_size, model.action_horizon, model.action_dim)
+    assert jnp.allclose(actions, baseline)
+
+
+def test_paper_rtc_config_unknown_mode_raises():
+    with pytest.raises(ValueError, match="Unknown RTC mode"):
+        rtc_utils_jax.resolve_rtc_mode(rtc_utils_jax.PaperRTCConfig(enabled=True, mode="typo_mode"))
+
+
 def test_pi0_fast_model():
     key = jax.random.key(0)
     config = pi0_fast.Pi0FASTConfig()
