@@ -37,7 +37,7 @@ rtc_experiment_init() {
 
   PRINT_ACTION_ARRAYS="${PRINT_ACTION_ARRAYS:-0}"
   DUMP_CHUNK_HANDOFF_ENABLE="${DUMP_CHUNK_HANDOFF_ENABLE:-1}"
-  PLOT_CHUNK_HANDOFF_ENABLE="${PLOT_CHUNK_HANDOFF_ENABLE:-1}"
+  PLOT_CHUNK_HANDOFF_ENABLE="${PLOT_CHUNK_HANDOFF_ENABLE:-0}"
 
   EXPERIMENT_ROOT="${EXPERIMENT_ROOT:-$ROOT_DIR/scripts/debug/executed_debug_scripts}"
   EXPERIMENT_DIR="${EXPERIMENT_DIR:-$EXPERIMENT_ROOT/$SCRIPT_NAME}"
@@ -93,8 +93,12 @@ rtc_dump_extra_args() {
   if [[ "$DUMP_CHUNK_HANDOFF_ENABLE" == "1" ]]; then
     DUMP_ARGS+=(--dump_chunk_handoff_enable --dump_chunk_handoff_dir "$DUMP_CHUNK_HANDOFF_DIR")
   fi
+}
+
+rtc_plot_extra_args() {
+  PLOT_ARGS=()
   if [[ "$PLOT_CHUNK_HANDOFF_ENABLE" == "1" ]]; then
-    DUMP_ARGS+=(--plot_chunk_handoff_enable --plot_chunk_handoff_dir "$PLOT_CHUNK_HANDOFF_DIR")
+    PLOT_ARGS+=(--plot_chunk_handoff_enable --plot_chunk_handoff_dir "$PLOT_CHUNK_HANDOFF_DIR")
   fi
 }
 
@@ -166,6 +170,7 @@ run_jax_rtc_experiment() {
   rtc_prepare_output_dirs
   rtc_common_extra_args
   rtc_dump_extra_args
+  rtc_plot_extra_args
 
   export XLA_PYTHON_CLIENT_PREALLOCATE
   export XLA_PYTHON_CLIENT_MEM_FRACTION
@@ -194,5 +199,6 @@ run_jax_rtc_experiment() {
     --seed "$SEED" \
     --max_steps "$MAX_STEPS" \
     "${EXTRA_ARGS[@]}" \
-    "${DUMP_ARGS[@]}"
+    "${DUMP_ARGS[@]}" \
+    "${PLOT_ARGS[@]}"
 }

@@ -9,10 +9,10 @@ import jax.numpy as jnp
 class RTCExecutedPrefixTransformSpec:
     """JAX-native spec for decoding model outputs into executed arm actions."""
 
-    action_mean: jax.Array | None
-    action_std: jax.Array | None
-    action_q01: jax.Array | None = None
-    action_q99: jax.Array | None = None
+    action_mean: tuple[float, ...] | jax.Array | None
+    action_std: tuple[float, ...] | jax.Array | None
+    action_q01: tuple[float, ...] | jax.Array | None = None
+    action_q99: tuple[float, ...] | jax.Array | None = None
     use_quantiles: bool = struct.field(pytree_node=False, default=False)
     delta_action_mask: tuple[bool, ...] | None = struct.field(pytree_node=False, default=None)
     output_joint_flip_mask: tuple[float, ...] | None = struct.field(pytree_node=False, default=None)

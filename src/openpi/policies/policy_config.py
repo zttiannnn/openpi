@@ -3,8 +3,6 @@ import os
 import pathlib
 from typing import Any
 
-import jax.numpy as jnp
-
 import openpi.models.model as _model
 from openpi.models import rtc_utils_jax as _rtc_utils_jax
 from openpi.models_pytorch.rtc_utils import RTCExecutedPrefixTransformSpec
@@ -78,11 +76,16 @@ def _build_rtc_executed_prefix_transform_spec_jax(
     if action_stats is None:
         return None
 
+    def _to_static_tuple(value) -> tuple[float, ...] | None:
+        if value is None:
+            return None
+        return tuple(float(v) for v in value.tolist())
+
     return _rtc_utils_jax.RTCExecutedPrefixTransformSpec(
-        action_mean=jnp.asarray(action_stats.mean),
-        action_std=jnp.asarray(action_stats.std),
-        action_q01=jnp.asarray(action_stats.q01) if action_stats.q01 is not None else None,
-        action_q99=jnp.asarray(action_stats.q99) if action_stats.q99 is not None else None,
+        action_mean=_to_static_tuple(action_stats.mean),
+        action_std=_to_static_tuple(action_stats.std),
+        action_q01=_to_static_tuple(action_stats.q01),
+        action_q99=_to_static_tuple(action_stats.q99),
         use_quantiles=use_quantiles,
         delta_action_mask=delta_action_mask,
         output_joint_flip_mask=output_joint_flip_mask,

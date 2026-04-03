@@ -7,8 +7,10 @@ from openpi.models import model as _model
 from openpi.models import pi0_config
 from openpi.models import pi0_fast
 from openpi.models import rtc_utils_jax
+from openpi.policies import policy_config as _policy_config
 from openpi.shared import download
 from openpi.shared import nnx_utils
+from openpi.shared.normalize import NormStats
 
 
 def test_pi0_model():
@@ -161,6 +163,32 @@ def test_pi0_model_rtc_executed_overlap_missing_inputs_matches_unguided_baseline
 
     assert actions.shape == (batch_size, model.action_horizon, model.action_dim)
     assert jnp.allclose(actions, baseline)
+
+
+def test_pi0_model_module_jit_accepts_static_executed_transform_spec():
+    key = jax.random.key(0)
+    config = pi0_config.Pi0Config()
+    model = config.create(key)
+
+    rtc_transform_spec = _policy_config._build_rtc_executed_prefix_transform_spec_jax(
+        norm_stats={
+            "actions": NormStats(
+                mean=jnp.zeros((model.action_dim,), dtype=jnp.float32),
+                std=jnp.ones((model.action_dim,), dtype=jnp.float32),
+                q01=jnp.full((model.action_dim,), -1.0, dtype=jnp.float32),
+                q99=jnp.full((model.action_dim,), 1.0, dtype=jnp.float32),
+            )
+        },
+        use_quantiles=False,
+        output_transforms=[],
+    )
+    assert rtc_transform_spec is not None
+    setattr(model, "rtc_executed_prefix_transform_spec", rtc_transform_spec)
+
+    batch_size = 2
+    obs, _act = config.fake_obs(batch_size), config.fake_act(batch_size)
+    actions = nnx_utils.module_jit(model.sample_actions)(key, obs, num_steps=5)
+    assert actions.shape == (batch_size, model.action_horizon, model.action_dim)
 
 
 def test_paper_rtc_config_unknown_mode_raises():
